@@ -57,6 +57,27 @@ level.interactables.push({
   label: () => 'E: pick up bottle',
   use: () => { bottle.pickUp(); game.holding = 'bottle'; },
 });
+// Cupboards: carrying a body, E shuts him in; empty-handed, E takes him back out.
+for (const spot of level.hideSpots) {
+  level.interactables.push({
+    kind: 'hide', spot, pos: spot.pos, range: 1.2,
+    available: () => (game.carried ? !spot.body : !!spot.body),
+    label: () => (game.carried ? 'E: hide him in the cupboard' : 'E: take the body out'),
+    use: () => {
+      if (game.carried) {
+        const g = game.carried;
+        stopCarrying();
+        spot.body = g;
+        g.stow(spot);
+        hearAll(spot.pos, STOW_NOISE);
+      } else {
+        const g = spot.body;
+        spot.body = null;
+        startCarrying(g);
+      }
+    },
+  });
+}
 
 // Aim line for the throw (hold G), with a ring where it will land.
 const MAX_ARC = 130;
@@ -161,6 +182,7 @@ function reset() {
   game.held = null;       // the guard being grabbed or knocked out
   game.brokeFree = false; // a grabbed guard got loose (raises the full alert)
   game.takedownGuard = null;
+  game.carried = null;    // the body over the player's shoulders
   game.guardShots = [];   // guard gunshots this run: { hit, t }
   bottle.reset();
   nv.enabled = false;
@@ -169,10 +191,21 @@ function reset() {
   else hud.showOverlay('Low Light', 'Click to play');
 }
 
-function nearestInteractable() {
+/** Bodies on the floor that can be picked up, as interactables (rebuilt each step: they move). */
+function bodyInteractables() {
+  return guards.filter((g) => g.lyingFree).map((g) => ({
+    kind: 'body', guard: g, pos: g.bodyPoint(), range: 1.3,
+    label: () => (g.state === 'dead' ? 'E: pick up the body' : 'E: pick him up'),
+    use: () => startCarrying(g),
+  }));
+}
+
+/** Nearest usable thing in reach. `kinds` limits it to those kinds (while carrying a body). */
+function nearestInteractable(kinds = null) {
   let best = null;
   let bestD = Infinity;
-  for (const it of level.interactables) {
+  for (const it of kinds ? level.interactables : [...level.interactables, ...bodyInteractables()]) {
+    if (kinds && !kinds.includes(it.kind)) continue;
     if (it.available && !it.available()) continue;
     const d = Math.hypot(it.pos.x - player.pos.x, it.pos.z - player.pos.z);
     if (d <= it.range && d < bestD) { best = it; bestD = d; }
@@ -222,7 +255,7 @@ function throwOrigin() {
 }
 
 function updateThrow(dt, inp) {
-  const canThrow = game.holding && !player.grabbing && !player.locked && !player.climb;
+  const canThrow = game.holding && !player.grabbing && !player.carrying && !player.locked && !player.climb;
   const gDown = inp.down('KeyG') && !game.pistolAim;
   if (canThrow && gDown) game.aiming = true;
   else if (game.aiming && canThrow && !gDown) {
@@ -245,7 +278,7 @@ function cameraDir() {
 }
 
 function updatePistol(dt, inp) {
-  const busy = player.climb || player.grabbing || player.locked;
+  const busy = player.climb || player.grabbing || player.carrying || player.locked;
   if (busy) game.pistolDrawn = false; // hands full: put it away
   else if (inp.pressed('Digit1') && !game.aiming) game.pistolDrawn = !game.pistolDrawn;
   game.pistolAim = game.pistolDrawn && !busy && !game.aiming;
@@ -345,6 +378,52 @@ function releaseGuard() {
   player.locked = false;
 }
 
+// ---------- Carrying bodies ----------
+const BODY_DROP_NOISE = 1.5; // m: putting a body down (guess)
+const STOW_NOISE = 1.0;      // m: shutting him in a cupboard (guess)
+const PUT_DOWN_DIST = 0.9;   // m in front of the player: the middle of the body
+
+function startCarrying(g) {
+  g.carry();
+  game.carried = g;
+  player.carrying = true;
+  player.crouched = false;
+  game.aiming = false;
+  holdCarried();
+}
+
+function stopCarrying() {
+  game.carried = null;
+  player.carrying = false;
+}
+
+/** The carried guard follows the player (guard.js lays him across the shoulders). */
+function holdCarried() {
+  const g = game.carried;
+  if (!g) return;
+  g.pos.set(player.pos.x, 0, player.pos.z);
+  g.yaw = player.facing;
+  g.applyMesh();
+}
+
+/** Lay him on the floor in front of the player, across the way you face, short of any wall. */
+function putDownBody() {
+  const g = game.carried;
+  const fx = -Math.sin(player.facing);
+  const fz = -Math.cos(player.facing);
+  const from = new THREE.Vector3(player.pos.x, 0.4, player.pos.z);
+  const want = new THREE.Vector3(player.pos.x + fx * PUT_DOWN_DIST, 0.4, player.pos.z + fz * PUT_DOWN_DIST);
+  const t = segmentFirstHit(from, want, level.boxes);
+  const mid = from.clone().lerp(want, t >= 1 ? 1 : Math.max(0, t - 0.35 / PUT_DOWN_DIST));
+  resolveCircle(mid, 0.3, level.boxes);
+  const yaw = player.facing + Math.PI / 2;
+  const feet = new THREE.Vector3(mid.x + Math.sin(yaw) * 0.88, 0, mid.z + Math.cos(yaw) * 0.88);
+  stopCarrying();
+  g.putDown(feet, yaw);
+  hearAll(mid, BODY_DROP_NOISE);
+}
+const putDownAction = { kind: 'putDown', label: () => 'E: put him down', use: putDownBody };
+
 /** One simulation step. */
 function step(dt, inp) {
   if (game.state === 'playing') {
@@ -367,6 +446,7 @@ function step(dt, inp) {
     player.lightLevel = (sampleLight[0] + sampleLight[1] + sampleLight[2]) / 3;
 
     holdGuard();
+    holdCarried();
     updateThrow(dt, inp);
     updatePistol(dt, inp);
     game.onGlass = !player.climb && level.onGlass(player.pos.x, player.pos.z);
@@ -382,7 +462,8 @@ function step(dt, inp) {
     game.interact = null;
     game.takedown = null;
     game.takedownGuard = null;
-    const reachable = !player.locked && !player.climb && !game.held ? guards.find((g) => g.canTakedown(player)) : null;
+    const reachable = !player.locked && !player.climb && !game.held && !game.carried
+      ? guards.find((g) => g.canTakedown(player)) : null;
     if (game.held && game.held.state === 'grabbed') {
       game.takedown = 'knockout';
       if (game.held.grip <= 0) {
@@ -395,6 +476,9 @@ function step(dt, inp) {
       }
     } else if (player.climb) {
       game.interact = player.atPipeEnd ? pipeDown : null;
+    } else if (game.carried) {
+      // Hands full: a cupboard or a door in reach, otherwise put him down.
+      game.interact = nearestInteractable(['hide', 'door']) || putDownAction;
     } else if (reachable) {
       game.takedown = 'grab';
       game.takedownGuard = reachable;
@@ -455,7 +539,8 @@ function updateHud() {
       mag: game.mag, size: MAG_SIZE, reserve: game.reserve,
       text: game.reloading > 0 ? 'RELOAD' : game.pistolDrawn ? 'DRAWN' : `[${K('pistol')}]`,
     },
-    held: game.holding ? (game.aiming ? 'BTL  AIMING' : `BTL  [${K('throw')}] throw`) : '',
+    held: game.carried ? `BODY  [${K('use')}] put down`
+      : game.holding ? (game.aiming ? 'BTL  AIMING' : `BTL  [${K('throw')}] throw`) : '',
     status: squad.hunt.active ? 'ALERT'
       : guards.some((g) => g.active && !g.disabled && g.icon === '?') ? 'CAUTION' : 'QUIET',
     dt: frameDt,
@@ -479,7 +564,7 @@ function updateHud() {
       suspicion: g.suspicion,
       icon: g.icon,
       grip: g.state === 'grabbed' ? g.grip : null,
-      hidden: !g.active || g.state === 'ko' || g.state === 'down' || g.state === 'dead',
+      hidden: !g.active || g.state === 'ko' || g.state === 'down' || g.state === 'dead' || g.state === 'carried',
     })),
   });
 }
@@ -629,8 +714,8 @@ requestAnimationFrame(frame);
 
 // Regression tests: open with ?test (see src/tests.js).
 if (new URLSearchParams(location.search).has('test')) {
-  import('./tests.js').then(({ runTests }) => {
-    const results = runTests(game);
+  import('./tests.js').then(async ({ runTests }) => {
+    const results = await runTests(game);
     window.testResults = results;
     const failed = results.filter((r) => !r.ok);
     hud.showOverlay(

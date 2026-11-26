@@ -67,3 +67,9 @@
   full alert ending, a guard walks up to 3 spots around where it happened, looks around at each, then
   patrols warier.
 - ✔ v0.10: Wrist unit HUD (Mat's request, an in-world field computer in place of the bars).
+
+## v0.11
+
+- ✔ v0.11 (status #2): Body hiding: carry a knocked-out or dead guard over the shoulders, put him down anywhere (dark corners and behind cover already hide bodies), or shut him in one of two cupboards where no guard finds him.
+- ✔ v0.11 (status #6): Paired takedown clip tested in Three.js with a stand-in rig and placeholder clip: both clips on one clock, lined up on the victim, attacker warped in from wherever he stood, GLB export and reload works.
+- ✔ (status #3): Handed to a tester and watched them play (Mat, 2026-11-26).

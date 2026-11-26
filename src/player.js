@@ -6,8 +6,8 @@ import { resolveCircle } from './collision.js';
 import { lerp, turnToward } from './utils.js';
 import { PIPE_Y, END_PAD } from './pipe.js';
 
-const SPEED = { crouch: 1.5, crouchRun: 2.4, walk: 3.0, run: 5.5, drag: 1.1 }; // m/s, guesses
-const NOISE = { crouch: 1, walk: 3, run: 10, drag: 2.5 }; // m, design doc values (walk was 4)
+const SPEED = { crouch: 1.5, crouchRun: 2.4, walk: 3.0, run: 5.5, drag: 1.1, carry: 1.6 }; // m/s, guesses
+const NOISE = { crouch: 1, walk: 3, run: 10, drag: 2.5, carry: 2.5 }; // m, design doc values (walk was 4; carry is a guess)
 export const MAX_NOISE = NOISE.run;
 const BODY_H = 1.74;
 
@@ -51,6 +51,7 @@ export class Player {
     this.running = false;
     this.grabbing = false; // holding a guard: slow, faces where the camera looks
     this.locked = false;   // mid-knockout: can't move
+    this.carrying = false; // a body over the shoulders: slow, can't run or crouch
     this.aiming = false;   // pistol up: faces where the camera looks
     this.climb = null;     // on a pipe: { pipe, s, mode: 'riser' | 'hang' | 'drop', style: 'legs' | 'hands' }
     this.climbSpeed = 0;
@@ -69,6 +70,7 @@ export class Player {
       if (c.mode === 'hang') return c.style === 'hands' ? 'HANGING · HANDS' : 'HANGING · LEGS UP';
       return c.mode === 'drop' ? 'DROPPING' : 'CLIMBING';
     }
+    if (this.carrying) return 'CARRYING';
     if (this.crouched) return 'CROUCHED';
     return this.running && this.speed > 3.2 ? 'RUNNING' : 'STANDING';
   }
@@ -120,7 +122,8 @@ export class Player {
 
   update(dt, input, camYaw, boxes) {
     this.landed = false;
-    if (input.pressed('KeyC') && !this.grabbing && !this.locked && !this.climb) this.crouched = !this.crouched;
+    if (input.pressed('KeyC') && !this.grabbing && !this.carrying && !this.locked && !this.climb) this.crouched = !this.crouched;
+    if (this.carrying) this.crouched = false;
 
     const f = (input.down('KeyW') ? 1 : 0) - (input.down('KeyS') ? 1 : 0);
     const s = (input.down('KeyD') ? 1 : 0) - (input.down('KeyA') ? 1 : 0);
@@ -131,8 +134,8 @@ export class Player {
     if (len > 0) { mx /= len; mz /= len; }
     if (this.climb) { this.updateClimb(dt, input, f, mx, mz, boxes); return; }
 
-    this.running = !this.grabbing && (input.down('ShiftLeft') || input.down('ShiftRight'));
-    const speed = this.grabbing ? SPEED.drag : this.crouched
+    this.running = !this.grabbing && !this.carrying && (input.down('ShiftLeft') || input.down('ShiftRight'));
+    const speed = this.grabbing ? SPEED.drag : this.carrying ? SPEED.carry : this.crouched
       ? (this.running ? SPEED.crouchRun : SPEED.crouch)
       : (this.running ? SPEED.run : SPEED.walk);
 
@@ -247,6 +250,7 @@ export class Player {
     if (v < 0.2) return 0;
     let radius, full;
     if (this.grabbing) { radius = NOISE.drag; full = SPEED.drag; }
+    else if (this.carrying) { radius = NOISE.carry; full = SPEED.carry; }
     else if (this.crouched) { radius = NOISE.crouch; full = SPEED.crouch; }
     else if (this.running && v > SPEED.walk + 0.2) { radius = NOISE.run; full = SPEED.run; }
     else { radius = NOISE.walk; full = SPEED.walk; }

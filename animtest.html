@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Low Light · paired takedown test</title>
+  <script type="importmap">
+    { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    } }
+  </script>
+  <style>
+    html, body { margin: 0; height: 100%; background: #050608; color: #b8f0b0; font: 13px/1.4 ui-monospace, Consolas, monospace; overflow: hidden; }
+    canvas { display: block; width: 100%; height: 100%; }
+    #panel { position: fixed; top: 12px; left: 12px; width: 300px; padding: 10px 12px; background: rgba(8, 14, 10, 0.85);
+      border: 1px solid #2a4a30; border-radius: 6px; }
+    #panel h1 { font-size: 14px; margin: 0 0 6px; color: #d8ffd0; }
+    #panel p { margin: 0 0 8px; color: #8fb88a; }
+    #panel label { display: block; margin: 6px 0 2px; }
+    #panel button, #panel select { font: inherit; background: #10201a; color: #d8ffd0; border: 1px solid #2f5a3a; border-radius: 4px; padding: 3px 8px; }
+    #panel input[type=range] { width: 100%; }
+    #readout { margin-top: 8px; white-space: pre; color: #d8ffd0; }
+    a { color: #9fd8ff; }
+  </style>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <div id="panel">
+    <h1>Paired takedown test</h1>
+    <p>Placeholder rig and clip built in code. A pack's GLB goes through the same player. <a href="./">Back to the game</a></p>
+    <div><button id="play">Play</button> <button id="loop">Loop: on</button></div>
+    <label>Source <select id="source"><option value="code">Clips built in code</option><option value="glb">Same clips after GLB export + reload</option></select></label>
+    <label>Attacker start <select id="start"><option value="exact">Exactly on the clip's start</option><option value="off" selected>Off by 0.4 m and 30° (warped)</option></select></label>
+    <label>Speed <select id="speed"><option>0.25</option><option>0.5</option><option selected>1</option></select></label>
+    <label>Time <input id="scrub" type="range" min="0" max="1" step="0.001" value="0"></label>
+    <div id="readout"></div>
+  </div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { makeRig, makeActor, makeTakedownClips, PairedTakedown, roundTripGLB, HOLD } from './src/paired.js';
+
+    const canvas = document.getElementById('view');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0c10);
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 50);
+    camera.position.set(3.2, 1.9, 2.2);
+    camera.lookAt(0, 0.9, 0.2);
+    scene.add(new THREE.HemisphereLight(0x8090b0, 0x202020, 0.6));
+    const sun = new THREE.DirectionalLight(0xffe2b0, 2.2);
+    sun.position.set(3, 6, 2);
+    sun.castShadow = true;
+    scene.add(sun);
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(12, 12), new THREE.MeshStandardMaterial({ color: 0x3a3c40, roughness: 0.9 }));
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    scene.add(floor);
+    scene.add(new THREE.GridHelper(12, 24, 0x2a4a30, 0x1a2a20));
+
+    const clips = makeTakedownClips();
+    const built = { attacker: makeActor(makeRig(0x2a3340, 0x22ff44)), victim: makeActor(makeRig(0x6b2a22, 0xccbb99)), clips };
+    let glb = null;
+    let rig = built;
+    let pair = null;
+    let maxHold = 0;
+    const el = (id) => document.getElementById(id);
+    const state = { loop: true, speed: 1, playing: true };
+
+    function tint(actor, hex) { // GLB copies share one material: give the victim his own colour
+      actor.model.traverse((o) => { if (o.isSkinnedMesh) { o.material = o.material.clone(); o.material.color.setHex(hex); } });
+    }
+
+    function begin() {
+      for (const r of [built, glb]) if (r) { scene.remove(r.attacker.group, r.victim.group); }
+      rig = el('source').value === 'glb' && glb ? glb : built;
+      scene.add(rig.attacker.group, rig.victim.group);
+      pair = new PairedTakedown(rig.attacker, rig.victim, rig.clips);
+      const off = el('start').value === 'off';
+      const anchorYaw = 0;
+      pair.start({
+        anchorPos: { x: 0, z: 0 }, anchorYaw,
+        attackerPos: off ? { x: 0.4, z: 0.95 + 0.1 } : { x: 0, z: 0.95 },
+        attackerYaw: off ? 30 * Math.PI / 180 : 0,
+      });
+      el('scrub').max = pair.duration;
+      maxHold = 0;
+      state.playing = true;
+    }
+
+    el('play').onclick = () => begin();
+    el('loop').onclick = () => { state.loop = !state.loop; el('loop').textContent = `Loop: ${state.loop ? 'on' : 'off'}`; };
+    el('speed').onchange = () => { state.speed = Number(el('speed').value); };
+    el('source').onchange = el('start').onchange = () => begin();
+    el('scrub').oninput = () => { state.playing = false; pair.setTime(Number(el('scrub').value)); };
+
+    roundTripGLB(clips).then((r) => {
+      glb = r;
+      tint(glb.victim, 0xd07060);
+      window.animTest.glbBytes = r.bytes;
+      el('source').options[1].text += ` (${(r.bytes / 1024).toFixed(0)} KB)`;
+    }).catch((e) => { el('source').options[1].text = 'GLB round trip failed: ' + e.message; window.animTest.glbError = e.message; });
+
+    function resize() {
+      renderer.setSize(innerWidth, innerHeight, false);
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+    }
+    addEventListener('resize', resize);
+    resize();
+    begin();
+
+    let last = performance.now();
+    let frameMs = 0;
+    const events = [];
+    function frame(now) {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const t0 = performance.now();
+      if (state.playing) {
+        for (const e of pair.update(dt * state.speed)) events.push(`${pair.t.toFixed(2)}s ${e.name}`);
+        if (!pair.running && state.loop) { events.length = 0; begin(); }
+        el('scrub').value = pair.t;
+      }
+      const contact = pair.contactError();
+      if (pair.t >= HOLD[0] && pair.t <= HOLD[1]) maxHold = Math.max(maxHold, contact);
+      frameMs = frameMs * 0.9 + (performance.now() - t0) * 0.1;
+      el('readout').textContent = [
+        `t ${pair.t.toFixed(2)} / ${pair.duration.toFixed(2)} s   drift ${pair.drift.toFixed(4)} s`,
+        `arm to throat now ${(contact * 100).toFixed(1)} cm`,
+        `worst during the hold ${(maxHold * 100).toFixed(1)} cm`,
+        `anim update ${frameMs.toFixed(2)} ms/frame`,
+        `events: ${events.slice(-3).join(', ') || '—'}`,
+      ].join('\n');
+      renderer.render(scene, camera);
+      requestAnimationFrame(frame);
+    }
+    window.animTest = { get pair() { return pair; }, begin, el };
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>

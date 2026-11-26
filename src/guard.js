@@ -11,6 +11,8 @@
 //               alert ends and they go back to patrol, warier.
 // Evidence: a shot-out light, a door the player left open, or a guard lying on the floor makes him
 // suspicious and sends him to look (capped at NOISE_CAP like sound).
+// Bodies: a knocked-out or dead guard can be carried ('carried' state, over the player's shoulder), put down
+// somewhere else, or shut in a hiding spot (a cupboard), where no guard can find him.
 // Sight can fill the meter to 100; sound alone can only bring a guard to investigate (NOISE_CAP).
 // Every number below is a starting guess to tune in playtests.
 
@@ -51,6 +53,9 @@ const INVESTIGATE_WALK = 1.3;
 const DOOR_SUSPICION = 20;      // added when he spots a door the player left open (guess)
 const BODY_SUSPICION = 45;      // added when he finds a guard lying on the floor (guess)
 const BODY_SEEN_LIGHT = 0.15;   // a body in darker light than this is only seen up close (guess)
+const BODY_MID = 0.88;          // m from a lying guard's feet to the middle of his body
+const CARRY_H = 1.78;           // m: a carried body's centreline height, over the shoulders
+const CARRY_BACK = 0.08;        // m behind the carrier's centre
 const SEARCH_AT = 55;           // peak suspicion that turns "look around" into a search (guess)
 const SEARCH_AREA = 8;          // m: search spots are nav nodes this close to where it happened (guess)
 const SEARCH_SPOTS = 3;         // spots he walks to (guess)
@@ -182,12 +187,15 @@ export class Guard {
     this.stimulusKind = null;   // 'sight' | 'sound' | 'evidence' (a shot-out light)
     this.grabTime = 0;
     this.koTime = 0;
+    this.carriedFrom = null;    // 'down' | 'dead' while carried: what he goes back to when put down
+    this.stowed = null;         // the hiding spot he's shut in, or null
     this.brokeFree = false;
     this.clock = 0;
     this.memory = [];           // [{ pos, weight, lastChecked }] spots worth patrolling (for the whole mission)
     this.checkCooldown = CHECK_EVERY;
     this.checkSpot = null;
     this.markerGroup.clear();
+    this.group.visible = this.active;
     this.rig.rotation.set(0, 0, 0);
     this.rig.position.set(0, 0, 0);
     this.applyMesh();
@@ -202,7 +210,49 @@ export class Guard {
 
   /** Out of action or held: no senses, no patrol. */
   get disabled() {
-    return this.state === 'grabbed' || this.state === 'ko' || this.state === 'down' || this.state === 'dead';
+    return this.state === 'grabbed' || this.state === 'ko' || this.state === 'down' || this.state === 'dead'
+      || this.state === 'carried';
+  }
+
+  /** Lying on the floor where he can be picked up (knocked out or dead, not hidden away). */
+  get lyingFree() {
+    return this.active && !this.stowed && (this.state === 'down' || this.state === 'dead');
+  }
+
+  /** Middle of his body: lying, he stretches from his feet (pos) forward along his yaw. */
+  bodyPoint() {
+    if (this.state !== 'down' && this.state !== 'dead') return new THREE.Vector3(this.pos.x, 0, this.pos.z);
+    return new THREE.Vector3(this.pos.x - Math.sin(this.yaw) * BODY_MID, 0, this.pos.z - Math.cos(this.yaw) * BODY_MID);
+  }
+
+  /** Picked up off the floor (or out of a hiding spot). pos / yaw then follow the carrier (main.js). */
+  carry() {
+    this.carriedFrom = this.state === 'dead' ? 'dead' : 'down';
+    this.stowed = null;
+    this.group.visible = true;
+    this.setState('carried');
+    this.rig.rotation.set(-Math.PI / 2, 0, 0); // across the shoulders (see updateDisabled)
+    this.rig.position.set(0, CARRY_H, 0);
+  }
+
+  /** Put down: lies with his feet at pos, stretched out along yaw. Slumps to the floor again. */
+  putDown(pos, yaw) {
+    this.pos.set(pos.x, 0, pos.z);
+    this.yaw = yaw;
+    this.setState(this.carriedFrom || 'down');
+    this.carriedFrom = null;
+    this.koTime = 0;
+    this.rig.rotation.set(0.3, 0, 0);
+    this.rig.position.set(0, 0, 0);
+    this.applyMesh();
+  }
+
+  /** Shut in a hiding spot: out of sight (until the player takes him out again). */
+  stow(spot) {
+    this.putDown(spot.inside, spot.yaw);
+    this.koTime = 1; // already lying
+    this.stowed = spot;
+    this.group.visible = false;
   }
 
   /** Player close behind an unaware guard. */
@@ -442,15 +492,21 @@ export class Guard {
   /** Guards lying on the floor (knocked out or dead) he can see: suspicious, he goes to the body. */
   checkBodies(level) {
     for (const g of this.squad.guards) {
-      if (g === this || !g.active || (g.state !== 'down' && g.state !== 'dead')) continue;
+      if (g === this || !g.lyingFree) continue; // carried, or shut in a cupboard: nothing to see
       if (this.knownBodies.has(g)) continue;
-      const p = new THREE.Vector3(g.pos.x, 0.35, g.pos.z);
-      const d = Math.hypot(p.x - this.pos.x, p.z - this.pos.z);
-      if (d > 2.5 && lightAt(p, level) < BODY_SEEN_LIGHT) continue; // dark hides a body, except up close
-      if (!this.canSee(p, level.boxes)) continue;
+      // Seen if his feet, middle or head is in sight; dark hides a body, except up close.
+      const p = g.bodyPoint();
+      p.y = 0.35;
+      const ends = [p, new THREE.Vector3(g.pos.x, 0.3, g.pos.z), p.clone().multiplyScalar(2).sub(g.pos).setY(0.3)];
+      const seen = ends.some((q) => {
+        const d = Math.hypot(q.x - this.pos.x, q.z - this.pos.z);
+        if (d > 2.5 && lightAt(q, level) < BODY_SEEN_LIGHT) return false;
+        return this.canSee(q, level.boxes);
+      });
+      if (!seen) continue;
       this.knownBodies.add(g);
-      this.remember(g.pos, 'sight');
-      this.noticeEvidence(g.pos, BODY_SUSPICION);
+      this.remember(p, 'sight');
+      this.noticeEvidence(p, BODY_SUSPICION);
       this.mustSearch = true;
     }
   }
@@ -743,6 +799,10 @@ export class Guard {
       this.rig.rotation.x = 0.3 + Math.sin(this.koTime * 11) * 0.09 * fade;
       this.rig.rotation.z = Math.sin(this.koTime * 8) * 0.12 * fade;
       if (this.koTime >= KO_TIME) { this.setState('down'); this.koTime = 0; }
+    } else if (this.state === 'carried') {
+      // Over the carrier's shoulders, lying across them (applyMesh places him).
+      this.rig.rotation.set(-Math.PI / 2, 0, 0);
+      this.rig.position.set(0, CARRY_H, 0);
     } else if (this.state === 'down' || this.state === 'dead') {
       // Slump forward onto the floor over ~0.6 s.
       this.koTime += dt;
@@ -807,6 +867,15 @@ export class Guard {
   }
 
   applyMesh() {
+    if (this.state === 'carried') {
+      // pos / yaw are the carrier's. Lie across his shoulders, middle of the body over them, a little behind.
+      const a = this.yaw + Math.PI / 2;
+      this.group.rotation.y = a;
+      this.group.position.set(
+        this.pos.x + Math.sin(a) * BODY_MID + Math.sin(this.yaw) * CARRY_BACK, 0,
+        this.pos.z + Math.cos(a) * BODY_MID + Math.cos(this.yaw) * CARRY_BACK);
+      return;
+    }
     this.group.position.copy(this.pos);
     this.group.rotation.y = this.yaw;
   }

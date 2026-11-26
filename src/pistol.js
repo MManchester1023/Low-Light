@@ -60,7 +60,7 @@ export function traceShot(origin, dir, level, guards) {
   }
   let guard = null;
   for (const g of guards) {
-    if (!g.active || g.state === 'down' || g.state === 'dead') continue;
+    if (!g.active || g.state === 'down' || g.state === 'dead' || g.state === 'carried') continue;
     const t = segmentCylinderT(origin, ab, g.pos, GUARD_R, GUARD_H);
     if (t < best) { best = t; kind = 'guard'; light = null; guard = g; }
   }

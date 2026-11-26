@@ -68,6 +68,35 @@ export function buildLevel(scene) {
   box(4.5, 7, 1, 2.2, 3, shelfMat); // shelf
   box(9, -7.4, 2.2, 0.8, 1, deskMat); // desk
 
+  // ---------- Hiding spots: cupboards a body can be shut in (main.js handles carrying) ----------
+  // Solid, against a wall. faceX/faceZ: the way its doors face (into the room).
+  const hideSpots = [];
+  const cupboardMat = mat(0x3c4a44, 0.75);
+  const cupboardDoorMat = mat(0x46564e, 0.7);
+  function cupboard(id, x, z, faceX, faceZ) {
+    const along = faceX !== 0; // doors face along x: the cupboard is wide in z
+    const w = along ? 0.7 : 1.1;
+    const d = along ? 1.1 : 0.7;
+    box(x, z, w, 2.1, d, cupboardMat);
+    for (const side of [-1, 1]) { // two door panels and handles on the front
+      const panel = new THREE.Mesh(new THREE.BoxGeometry(along ? 0.03 : 0.52, 1.95, along ? 0.52 : 0.03), cupboardDoorMat);
+      const off = side * 0.27;
+      panel.position.set(x + faceX * 0.36 + (along ? 0 : off), 1.05, z + faceZ * 0.36 + (along ? off : 0));
+      const handle = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.18, 0.03), mat(0x9a9a8a, 0.4, { metalness: 0.6 }));
+      handle.position.set(x + faceX * 0.39 + (along ? 0 : side * 0.04), 1.05, z + faceZ * 0.39 + (along ? side * 0.04 : 0));
+      scene.add(panel, handle);
+    }
+    hideSpots.push({
+      id,
+      pos: new THREE.Vector3(x + faceX * 0.9, 0, z + faceZ * 0.9), // where you stand to use it
+      inside: new THREE.Vector3(x, 0, z),
+      yaw: Math.atan2(-faceZ, faceX), // a body inside lies across it (never seen anyway)
+      body: null,                      // the guard shut in it
+    });
+  }
+  cupboard('west', -11.65, 1.5, 1, 0);  // west wall, south of the crates
+  cupboard('east', 8, 8.65, 0, -1);     // south wall of the east room
+
   // ---------- Ceiling pipe ----------
   // Riser by the west wall, along the ceiling over the middle doorway (the guard's route), then north and
   // east along the north wall to a riser behind the desk. Not solid: it never blocks sight or movement.
@@ -343,6 +372,7 @@ export function buildLevel(scene) {
     glass.length = 0;
     updateLeds();
     files.visible = true;
+    for (const h of hideSpots) h.body = null;
   }
 
   return Object.assign(level, {
@@ -357,6 +387,7 @@ export function buildLevel(scene) {
     guardRoutes: [guardRoute, guardRoute2],
     navNodes,
     pipes,
+    hideSpots,
     switchFor,
     setGroup,
     breakLight,

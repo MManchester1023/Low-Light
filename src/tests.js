@@ -6,6 +6,8 @@
 // Most tests are about one guard, so fresh() takes the other guards out of the level; tests about several
 // guards bring them back with both().
 
+import { makeRig, makeActor, makeTakedownClips, PairedTakedown, roundTripGLB, HOLD, WARP_TIME } from './paired.js';
+
 const HIDE = { x: -60, z: -60 }; // far outside the level: no guard can see or hear the player here
 
 export function runTests(game) {
@@ -57,6 +59,10 @@ export function runTests(game) {
     d.simulate(2, hide);
     return game.impact ? game.impact.pos : null;
   }
+
+  // Tests that need to wait (GLB export / load) run after the others, and don't touch the game.
+  const pending = [];
+  const testAsync = (name, fn) => pending.push({ name, fn });
 
   // ---------- Tests ----------
 
@@ -813,6 +819,211 @@ export function runTests(game) {
     check(input.bindings.forward === 'KeyW' && input.bindings.back === 'KeyS', 'defaults not restored');
   });
 
+  // ---------- Bodies: carry, put down, hide in a cupboard ----------
+
+  /** Knock the guard out at (x, z) lying along yaw, let him slump, then pick him up. */
+  function pickUpBodyAt(g, x, z, yaw = 0, how = 'ko') {
+    g.pos.set(x, 0, z);
+    g.yaw = yaw;
+    if (how === 'dead') g.kill(); else g.dropKnockOut();
+    d.simulate(1, hide);
+    const b = g.bodyPoint();
+    place(b.x + 0.8, b.z);
+    d.simulate(1 / 60);
+    check(game.interact && game.interact.kind === 'body' && game.interact.guard === g,
+      `no pick-up prompt by the body (${game.interact && game.interact.kind})`);
+    d.press('KeyE');
+    d.simulate(1 / 60);
+    check(g.state === 'carried' && game.carried === g && player.carrying, `not carrying him (guard ${g.state})`);
+  }
+
+  test('Bodies: pick up a knocked-out guard, carry him, put him down somewhere else', () => {
+    pickUpBodyAt(guard, -6, 6.6);
+    const from = guard.bodyPoint();
+    check(guard.rig.position.y > 1.4, 'carried body is not up on the shoulders');
+    game.cam.yaw = Math.PI / 2; // walk west
+    d.hold('KeyW');
+    d.simulate(1.5);
+    d.release('KeyW');
+    check(near(guard.pos, player.pos, 0.01), 'carried body did not come along');
+    check(game.interact && game.interact.kind === 'putDown', `no put-down prompt (${game.interact && game.interact.kind})`);
+    d.press('KeyE');
+    d.simulate(1);
+    check(guard.state === 'down' && !player.carrying && !game.carried, `still carrying (guard ${guard.state})`);
+    const mid = guard.bodyPoint();
+    const gap = Math.hypot(mid.x - player.pos.x, mid.z - player.pos.z);
+    check(gap > 0.4 && gap < 1.3, `body put down ${gap.toFixed(2)} m from the player`);
+    check(!near(mid, from, 1.5), 'body is still where he fell');
+    check(game.interact && game.interact.kind === 'body', 'cannot pick him up again');
+  });
+
+  test('Bodies: carrying means no running, crouching, pistol or takedowns', () => {
+    both();
+    guard2.pos.set(HIDE.x, 0, HIDE.z + 10);
+    pickUpBodyAt(guard, -6, 6.6);
+    game.cam.yaw = Math.PI / 2;
+    d.hold('KeyW');
+    d.hold('ShiftLeft');
+    d.simulate(1);
+    check(!player.running && player.speed < 2.5, `running with a body (${player.speed.toFixed(1)} m/s)`);
+    d.release('ShiftLeft');
+    d.press('KeyC');
+    d.simulate(1 / 60);
+    check(!player.crouched, 'crouched with a body');
+    d.press('Digit1');
+    d.simulate(1 / 60);
+    check(!game.pistolDrawn, 'drew the pistol with a body');
+    d.release('KeyW');
+    // A guard right in front, back turned: no grab while carrying.
+    guard2.setState('patrol');
+    guard2.route = [{ x: player.pos.x - 1, z: player.pos.z, pause: 99, lookYaw: Math.PI / 2 }];
+    guard2.pauseTimer = 99;
+    guard2.pos.set(player.pos.x - 1, 0, player.pos.z);
+    guard2.yaw = Math.PI / 2;
+    try {
+      check(guard2.canTakedown(player), 'set-up: guard 2 not in takedown reach');
+      d.simulate(1 / 60, () => { guard2.pos.set(player.pos.x - 1, 0, player.pos.z); guard2.yaw = Math.PI / 2; });
+      check(game.takedown !== 'grab', 'grab offered while carrying a body');
+    } finally {
+      guard2.route = level.guardRoutes[1];
+    }
+  });
+
+  test('Bodies: a body shut in a cupboard is never found, and can be taken out again', () => {
+    const spot = level.hideSpots[0];
+    pickUpBodyAt(guard, -9, 4);
+    place(spot.pos.x, spot.pos.z);
+    d.simulate(1 / 60);
+    check(game.interact && game.interact.kind === 'hide', `no cupboard prompt (${game.interact && game.interact.kind})`);
+    d.press('KeyE');
+    d.simulate(1 / 60);
+    check(spot.body === guard && guard.stowed === spot && !guard.group.visible && !player.carrying, 'body not in the cupboard');
+    // Another guard right by the cupboard, lights on, looking at it.
+    both();
+    hide();
+    guard2.pos.set(spot.pos.x + 1, 0, spot.pos.z);
+    guard2.yaw = yawTo(guard2.pos, spot.inside);
+    guard2.checkBodies(level);
+    check(!guard2.knownBodies.has(guard), 'a guard found the body inside the cupboard');
+    guard2.setActive(false);
+    place(spot.pos.x, spot.pos.z);
+    d.simulate(1 / 60);
+    check(game.interact && game.interact.kind === 'hide' && /take/.test(game.interact.label()), 'no take-out prompt');
+    d.press('KeyE');
+    d.simulate(1 / 60);
+    check(game.carried === guard && guard.group.visible && !spot.body && !guard.stowed, 'did not take the body out');
+  });
+
+  test('Bodies: a guard finds a body where it was put down', () => {
+    // Carry the east guard over to the lit north end of the west room, in front of guard 2's first stop.
+    pickUpBodyAt(guard, 6, -1);
+    place(-7.6, -4.3);
+    player.facing = Math.PI / 2; // facing west
+    d.press('KeyE');
+    d.simulate(1);
+    check(guard.state === 'down', `body not put down (${guard.state})`);
+    const mid = guard.bodyPoint();
+    hide();
+    guard2.setActive(true);
+    d.simulate(3, hide);
+    check(guard2.knownBodies.has(guard), `guard 2 did not find the body at (${mid.x.toFixed(1)}, ${mid.z.toFixed(1)})`);
+    check(near(guard2.stimulus, mid, 1), 'guard 2 is not looking where the body is');
+  });
+
+  test('Bodies: a shot guard can be carried and stays dead', () => {
+    pickUpBodyAt(guard, -6, 6.6, 0, 'dead');
+    d.press('KeyE');
+    d.simulate(1);
+    check(guard.state === 'dead', `guard is ${guard.state} after being put down`);
+  });
+
+  test('Bodies: restart empties the cupboards and the player\'s shoulders', () => {
+    const spot = level.hideSpots[1];
+    pickUpBodyAt(guard, 6, 6);
+    place(spot.pos.x, spot.pos.z);
+    d.simulate(1 / 60);
+    d.press('KeyE');
+    d.simulate(1 / 60);
+    check(spot.body === guard, 'set-up: body not in the east cupboard');
+    both();
+    pickUpBodyAt(guard2, -6, 6.6);
+    d.reset();
+    check(!spot.body && !guard.stowed && guard.group.visible && guard.state === 'patrol', 'cupboard still holds a body');
+    check(!player.carrying && !game.carried && guard2.state === 'patrol', 'still carrying after restart');
+  });
+
+  // ---------- Paired takedown clip test (status #6) ----------
+
+  /** Run a whole paired takedown at dt = 1/60; returns what happened. */
+  function runPair(pair, opts) {
+    pair.start(opts);
+    const out = { events: [], worstHold: 0, drift: 0, start: pair.a.bone('root').getWorldPosition(new (player.pos.constructor)()), roots: [] };
+    while (pair.running) {
+      for (const e of pair.update(1 / 60)) out.events.push(e.name);
+      out.drift = Math.max(out.drift, pair.drift);
+      if (pair.t >= HOLD[0] && pair.t <= HOLD[1]) out.worstHold = Math.max(out.worstHold, pair.contactError());
+      if (pair.t > WARP_TIME + 0.01) out.roots.push(pair.a.bone('root').getWorldPosition(new (player.pos.constructor)()));
+    }
+    out.end = pair.endPlacement();
+    return out;
+  }
+
+  test('Paired takedown: the two clips line up, even from an off-target start', () => {
+    const clips = makeTakedownClips();
+    const anchorPos = { x: 3, z: -2 };
+    const anchorYaw = 1.0;
+    // Where the clip wants the attacker: 0.95 m behind the victim (pair space +z), turned into the world.
+    const exact = { x: anchorPos.x + Math.sin(anchorYaw) * 0.95, z: anchorPos.z + Math.cos(anchorYaw) * 0.95 };
+    const aligned = runPair(new PairedTakedown(makeActor(makeRig()), makeActor(makeRig()), clips),
+      { anchorPos, anchorYaw, attackerPos: exact, attackerYaw: anchorYaw });
+    const off = { x: exact.x + 0.4, z: exact.z - 0.2 };
+    const warped = runPair(new PairedTakedown(makeActor(makeRig()), makeActor(makeRig()), clips),
+      { anchorPos, anchorYaw, attackerPos: off, attackerYaw: anchorYaw + 0.5 });
+    check(near(aligned.start, exact, 0.01), 'aligned start is not on the clip start');
+    check(near(warped.start, off, 0.01), 'warped attacker did not start where he really stood');
+    check(warped.events.join() === 'grab,limp,down', `events ${warped.events.join()}`);
+    check(warped.drift < 1e-6, `clips drifted ${warped.drift}`);
+    check(aligned.worstHold < 0.1 && warped.worstHold < 0.1,
+      `arm came off the neck during the hold (${aligned.worstHold.toFixed(2)} / ${warped.worstHold.toFixed(2)} m)`);
+    const gap = Math.max(...warped.roots.map((p, i) => p.distanceTo(aligned.roots[i])));
+    check(gap < 0.002, `after the warp the attacker is ${gap.toFixed(3)} m off the clip`);
+    check(warped.end.victimHips.y < 0.3, `victim did not end on the floor (hips at ${warped.end.victimHips.y.toFixed(2)} m)`);
+  });
+
+  testAsync('Paired takedown: the clips survive a GLB export and reload', async () => {
+    const clips = makeTakedownClips();
+    const r = await roundTripGLB(clips);
+    check(r.bytes > 0 && r.clips.attacker && r.clips.victim, 'clips missing from the GLB');
+    check(Math.abs(r.clips.attacker.duration - clips.attacker.duration) < 1e-3, 'clip length changed');
+    const opts = { anchorPos: { x: 0, z: 0 }, anchorYaw: 0, attackerPos: { x: 0, z: 0.95 }, attackerYaw: 0 };
+    const built = new PairedTakedown(makeActor(makeRig()), makeActor(makeRig()), clips);
+    const loaded = new PairedTakedown(r.attacker, r.victim, r.clips);
+    built.start(opts);
+    loaded.start(opts);
+    let worst = 0;
+    for (const t of [0.2, 0.6, 1.2, 2.0, 2.7, 3.3]) {
+      built.setTime(t);
+      loaded.setTime(t);
+      for (const [x, y] of [[built.a, loaded.a], [built.v, loaded.v]]) {
+        for (const n of ['handR', 'head', 'footL']) {
+          worst = Math.max(worst, x.bone(n).getWorldPosition(new (player.pos.constructor)())
+            .distanceTo(y.bone(n).getWorldPosition(new (player.pos.constructor)())));
+        }
+      }
+    }
+    check(worst < 0.01, `reloaded clips move the bones differently (${worst.toFixed(3)} m)`);
+  });
+
   fresh();
-  return results;
+  return (async () => {
+    for (const { name, fn } of pending) {
+      try {
+        await fn();
+        results.push({ name, ok: true });
+      } catch (e) {
+        results.push({ name, ok: false, detail: e.message });
+      }
+    }
+    return results;
+  })();
 }

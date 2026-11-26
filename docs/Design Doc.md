@@ -63,7 +63,7 @@ Start with one grab and one knockout, then add moves once those feel good. Taked
 | [Silent Takedown Animation Pack](https://www.fab.com/listings/a882f9ec-ee79-4acb-8fda-320edb319f67?lang=en) | Check listing | 23 takedowns with reactions; stylized |
 | [Stealth Kills, Motion Cast #10](https://www.fab.com/listings/a37b4ff8-c9a8-4be6-8079-bd88ffeae825?lang=en) | Check listing | 42 paired kills, 9 bare-handed; needs retargeting from the Unreal skeleton |
 
-- [ ] Test one paired clip in Three.js before buying a pack
+- [x] Test one paired clip in Three.js before buying a pack (v0.11: works, animtest.html)
 - [ ] Check each license for browser delivery, where players can potentially extract model files
 
 ## Guard behavior
@@ -83,4 +83,4 @@ The first build answers one question in two weekends: is sneaking up on a single
 
 **Pass test:** the tester waits, plans an approach and reacts out loud to a near miss. If not, fix detection before adding content.
 
-**Out of scope for now:** gadgets beyond a throwable and the pistol, multiplayer, final art and body hiding.
+**Out of scope for now:** gadgets beyond a throwable and the pistol, multiplayer and final art.
