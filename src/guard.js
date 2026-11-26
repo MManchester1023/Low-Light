@@ -780,7 +780,7 @@ export class Guard {
     const hit = this.accuracy >= 1;
     if (hit) this.accuracy -= 1;
     const from = new THREE.Vector3(this.pos.x - Math.sin(this.yaw) * 0.4, 1.35, this.pos.z - Math.cos(this.yaw) * 0.4);
-    const to = new THREE.Vector3(player.pos.x, player.pos.y + 1.2, player.pos.z);
+    const to = player.samplePoints()[1]; // his chest, wherever it is (crouched, standing, hanging)
     if (!hit) { to.x += (this.accuracy - 0.5) * 1.2; to.y += 0.5; } // a near miss
     this.squad.shots.push({ from, to, hit, guard: this, noise: GUN_NOISE });
   }

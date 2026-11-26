@@ -12,3 +12,5 @@
 | 2026-11-26 | v0.7 | Guard doesn't notice shot-out lights. | Fixed in v0.8: he gets suspicious, walks over and searches. |
 | 2026-11-26 | v0.9 | Doesn't like having to click to move the camera; it should follow the mouse. | Done in v0.9.1. |
 | 2026-11-26 | v0.9.1 | Wants a more immersive HUD than plain bars (a wrist computer like a field PDA). | Done in v0.10: wrist unit. |
+| 2026-11-26 | v0.11 | The pistol stays at head height no matter what. | Fixed in v0.11.1: follows crouch and aim. |
+| 2026-11-26 | v0.11 | Guard tracers go to standing height when you're crouched. | Fixed in v0.11.1: they aim at your real chest. |

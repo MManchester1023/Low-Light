@@ -637,6 +637,48 @@ export function runTests(game) {
     d.simulate(1 / 60, drive);
   }
 
+  test('Pistol: the gun sits at the shoulder for the stance and tilts with the aim', () => {
+    hide();
+    d.press('Digit1');
+    d.simulate(0.1, hide);
+    const muzzle = () => game.pistolMesh.getWorldPosition(new (player.pos.constructor)());
+    game.cam.pitch = 0;
+    d.simulate(0.1, hide);
+    const stand = muzzle();
+    d.press('KeyC');
+    d.simulate(0.6, hide);
+    const crouch = muzzle();
+    check(game.pistolAim && player.crouched, 'set-up: not crouched with the pistol drawn');
+    check(stand.y - crouch.y > 0.3, `pistol did not come down when crouching (${stand.y.toFixed(2)} -> ${crouch.y.toFixed(2)} m)`);
+    game.cam.pitch = 0.5;
+    d.simulate(1 / 60, hide);
+    const up = muzzle();
+    game.cam.pitch = -0.8;
+    d.simulate(1 / 60, hide);
+    const down = muzzle();
+    check(up.y > crouch.y + 0.1 && down.y < crouch.y - 0.1, 'pistol does not tilt with the aim');
+  });
+
+  test('Full alert: guards shoot at where a crouched player really is', () => {
+    const shotY = (crouched) => {
+      fresh();
+      d.simulate(1 / 60);
+      const fx = guard.pos.x - Math.sin(guard.yaw) * 3;
+      const fz = guard.pos.z - Math.cos(guard.yaw) * 3;
+      place(fx, fz);
+      if (crouched) { d.press('KeyC'); d.simulate(0.6, () => place(fx, fz)); }
+      guard.joinHunt();
+      guard.raiseAlert(player.pos);
+      d.simulate(3, () => { if (game.state === 'playing') place(fx, fz); });
+      const hit = game.guardShots.find((s) => s.hit);
+      check(hit, `no hit ${crouched ? 'crouched' : 'standing'}`);
+      return hit.to.y;
+    };
+    const standY = shotY(false);
+    const crouchY = shotY(true);
+    check(standY - crouchY > 0.3, `crouched hits land at ${crouchY.toFixed(2)} m, standing at ${standY.toFixed(2)} m`);
+  });
+
   test('Pistol: shoot the guard, rating drops to Cleared', () => {
     d.simulate(1 / 60); // paused at his first waypoint, facing the north wall
     const stay = () => place(guard.pos.x, guard.pos.z + 4); // behind him

@@ -97,10 +97,21 @@ scene.add(aimMark);
 const arcPts = [];
 
 // Pistol: model in the right hand while aiming, and a brief tracer for each shot.
+// It hangs off a shoulder pivot that follows the stance (crouching lowers it) and tilts with the aim.
 const pistolMesh = makePistolMesh();
-pistolMesh.position.set(0.28, 1.38, -0.42);
-pistolMesh.visible = false;
-player.group.add(pistolMesh);
+pistolMesh.position.set(0.08, 0, -0.42);
+const pistolPivot = new THREE.Group();
+pistolPivot.add(pistolMesh);
+pistolPivot.visible = false;
+player.group.add(pistolPivot);
+const SHOULDER_DROP = 0.17; // m below the eye pivot
+
+/** Put the pistol at the shoulder for the current stance, pointing where the camera aims. */
+function posePistol() {
+  pistolPivot.position.set(0.2, player.eyeHeight - SHOULDER_DROP, 0);
+  pistolPivot.rotation.x = game.cam.pitch;
+  player.group.updateMatrixWorld(true);
+}
 const tracer = new THREE.Line(
   new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3)),
   new THREE.LineBasicMaterial({ color: 0xffe0a0, transparent: true, opacity: 0.7, depthWrite: false })
@@ -149,6 +160,7 @@ const game = {
   interact: null,
 };
 window.game = game; // for scripted checks
+game.pistolMesh = pistolMesh;
 
 function reset() {
   level.reset();
@@ -317,6 +329,7 @@ function updatePistol(dt, inp) {
   }
   game.lastShot = { kind: hit.kind, point: hit.point, t: game.time, heard };
   const arr = tracer.geometry.attributes.position.array;
+  posePistol();
   const muzzle = pistolMesh.getWorldPosition(new THREE.Vector3());
   arr.set([muzzle.x, muzzle.y, muzzle.z, hit.point.x, hit.point.y, hit.point.z]);
   tracer.geometry.attributes.position.needsUpdate = true;
@@ -329,7 +342,7 @@ function handleGuardShots() {
     line.geometry.attributes.position.array.set([shot.from.x, shot.from.y, shot.from.z, shot.to.x, shot.to.y, shot.to.z]);
     line.geometry.attributes.position.needsUpdate = true;
     line.userData.t = game.time;
-    game.guardShots.push({ hit: shot.hit, t: game.time });
+    game.guardShots.push({ hit: shot.hit, t: game.time, to: shot.to.clone() });
     if (shot.hit) { game.health = Math.max(0, game.health - GUARD_DAMAGE); game.hurt = 1; }
     hearAll(shot.from, shot.noise); // the others hear it (and come running if hunting)
   }
@@ -528,7 +541,8 @@ function updateCamera() {
 }
 
 function updateHud() {
-  pistolMesh.visible = game.pistolAim;
+  pistolPivot.visible = game.pistolAim;
+  if (game.pistolAim) posePistol();
   crosshairEl.classList.toggle('on', game.pistolAim);
   hud.update({
     light: player.lightLevel,
