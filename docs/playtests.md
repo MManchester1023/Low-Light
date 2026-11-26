@@ -10,3 +10,4 @@
 | 2026-11-26 | v0.2.1 | Guards should walk towards and investigate noises. | Done in v0.3. |
 | 2026-11-26 | v0.2.1 | Start the first hand-to-hand takedown. | Done in v0.3: grab and knockout. |
 | 2026-11-26 | v0.7 | Guard doesn't notice shot-out lights. | Fixed in v0.8: he gets suspicious, walks over and searches. |
+| 2026-11-26 | v0.9 | Doesn't like having to click to move the camera; it should follow the mouse. | Done in v0.9.1. |

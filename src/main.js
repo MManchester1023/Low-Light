@@ -348,7 +348,7 @@ function releaseGuard() {
 /** One simulation step. */
 function step(dt, inp) {
   if (game.state === 'playing') {
-    const keyYaw = (inp.down('ArrowLeft') ? 1 : 0) - (inp.down('ArrowRight') ? 1 : 0);
+    const keyYaw = (inp.down('ArrowLeft') ? 1 : 0) - (inp.down('ArrowRight') ? 1 : 0) - (inp.edgeX || 0);
     const keyPitch = (inp.down('ArrowUp') ? 1 : 0) - (inp.down('ArrowDown') ? 1 : 0);
     game.cam.yaw -= inp.mouseDX * SENS - keyYaw * KEY_LOOK * dt;
     game.cam.pitch = clamp(game.cam.pitch - inp.mouseDY * SENS + keyPitch * KEY_LOOK * 0.6 * dt, -1.1, 0.6);

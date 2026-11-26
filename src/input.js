@@ -1,6 +1,8 @@
 // Keyboard + mouse input, with rebindable keys.
-// Clicking starts play. Pointer lock is requested but not required: some browsers and embedded
-// panes refuse it, so without a lock you look around by dragging the mouse (or with the arrow keys).
+// Clicking starts play. Moving the mouse turns the camera, no button needed. Pointer lock is requested
+// (and asked for again on each click) but some browsers and embedded panes refuse it: without a lock the
+// cursor is hidden and still turns the camera, and resting it at the left or right edge of the window
+// keeps turning that way, so you never run out of room. Arrow keys look around too.
 //
 // Rebinding: game code always asks for an action's default key code (input.down('KeyW') means "forward").
 // When a player binds forward to another key, that key is translated to 'KeyW' on the way in, and W itself
@@ -28,6 +30,7 @@ export const ACTIONS = [
 ];
 const CANONICAL = new Set(ACTIONS.map((a) => a.code));
 const STORE_KEY = 'lowlight.keys';
+const EDGE_PX = 24; // unlocked cursor this close to the side of the window keeps turning the camera
 
 /** Short name for a key code: KeyW → W, Digit1 → 1, ShiftLeft → Shift, ArrowUp → ↑. */
 export function keyLabel(code) {
@@ -51,7 +54,7 @@ export class Input {
     this._dy = 0;
     this._locked = false;
     this._active = false;
-    this._dragging = false;
+    this._edgeX = 0; // -1 / 1 while the unlocked cursor sits at the left / right edge
     this.onActiveChange = null;   // (active: boolean) => void
     this.onBindingsChange = null; // () => void
     this.bindings = this._loadBindings(); // action id -> key code
@@ -70,7 +73,7 @@ export class Input {
       if (this._active && code && CANONICAL.has(code)) e.preventDefault();
       if (code) this._down.delete(code);
     });
-    window.addEventListener('blur', () => { this._down.clear(); this._pressed.clear(); this._dragging = false; });
+    window.addEventListener('blur', () => { this._down.clear(); this._pressed.clear(); this._edgeX = 0; });
 
     const overlay = document.getElementById('overlay');
     if (overlay) overlay.addEventListener('click', () => this.resume());
@@ -85,17 +88,19 @@ export class Input {
 
     canvas.addEventListener('mousedown', (e) => {
       if (!this._active) return;
-      this._dragging = true;
+      if (!this._locked) this._requestLock(); // try again: a click is a user gesture
       if (e.button === 0) { this._down.add('Mouse0'); this._pressed.add('Mouse0'); } // fires the pistol
     });
     window.addEventListener('mouseup', (e) => {
       if (e.button === 0) this._down.delete('Mouse0');
-      this._dragging = false;
     });
     window.addEventListener('mousemove', (e) => {
-      if (!this._active || !(this._locked || this._dragging)) return;
-      this._dx += e.movementX;
-      this._dy += e.movementY;
+      if (!this._active) return;
+      this._dx += e.movementX || 0;
+      this._dy += e.movementY || 0;
+      if (this._locked) { this._edgeX = 0; return; }
+      const edge = Math.max(EDGE_PX, window.innerWidth * 0.03);
+      this._edgeX = e.clientX <= edge ? -1 : e.clientX >= window.innerWidth - edge ? 1 : 0;
     });
   }
 
@@ -144,11 +149,15 @@ export class Input {
   /** Start or resume play (must come from a click or key press so the pointer lock is allowed). */
   resume() {
     this._setActive(true);
+    this._requestLock();
+  }
+
+  _requestLock() {
     if (document.pointerLockElement === this.canvas) return;
     try {
       const p = this.canvas.requestPointerLock();
       if (p && p.catch) p.catch(() => {});
-    } catch (_) { /* lock refused: drag-to-look still works */ }
+    } catch (_) { /* lock refused: mouse look still works unlocked */ }
   }
 
   pause() { this._setActive(false); }
@@ -156,7 +165,8 @@ export class Input {
   _setActive(on) {
     if (this._active === on) return;
     this._active = on;
-    this._dragging = false;
+    this._edgeX = 0;
+    document.body.classList.toggle('playing', on); // hides the cursor over the game
     if (!on) {
       this._down.clear();
       this._dx = 0;
@@ -170,6 +180,8 @@ export class Input {
   pressed(code) { return this._pressed.has(code); }
   get mouseDX() { return this._dx; }
   get mouseDY() { return this._dy; }
+  /** -1 / 0 / 1: keep turning left / right (unlocked cursor resting at a window edge). */
+  get edgeX() { return this._active && !this._locked ? this._edgeX : 0; }
   get locked() { return this._locked; }
   /** True while the game is being played (clicked in, not paused). */
   get active() { return this._active; }
@@ -181,6 +193,7 @@ export class NullInput {
   pressed() { return false; }
   get mouseDX() { return 0; }
   get mouseDY() { return 0; }
+  get edgeX() { return 0; }
   get locked() { return false; }
   get active() { return false; }
   endFrame() {}

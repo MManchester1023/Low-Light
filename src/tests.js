@@ -687,6 +687,29 @@ export function runTests(game) {
     }
   });
 
+  test('Mouse look: moving the mouse turns the camera with no button held', () => {
+    const input = game.input;
+    const move = (dx, clientX) => window.dispatchEvent(new MouseEvent('mousemove', { movementX: dx, movementY: 0, clientX, clientY: 300 }));
+    try {
+      input._setActive(true); // playing, without pointer lock (tests can't get one)
+      check(document.body.classList.contains('playing'), 'cursor not hidden while playing');
+      move(40, window.innerWidth / 2);
+      check(input.mouseDX === 40, `mouse movement not picked up without a click (dx ${input.mouseDX})`);
+      input.endFrame();
+      move(0, 2);
+      check(input.edgeX === -1, 'cursor at the left edge does not keep turning');
+      move(0, window.innerWidth - 2);
+      check(input.edgeX === 1, 'cursor at the right edge does not keep turning');
+      move(0, window.innerWidth / 2);
+      check(input.edgeX === 0, 'still turning away from the edge');
+    } finally {
+      input._setActive(false);
+      input.endFrame();
+      game.menu.close();
+    }
+    check(!document.body.classList.contains('playing') && input.edgeX === 0, 'pausing did not reset mouse look');
+  });
+
   test('Rebinding a key in settings moves the action to the new key', () => {
     const input = game.input;
     const key = (type, code) => window.dispatchEvent(new KeyboardEvent(type, { code }));

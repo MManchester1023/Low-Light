@@ -58,3 +58,5 @@
 - ✔ v0.9 (status #5): Evidence: a door to the south doorway (closed to start; guards open and shut it on
   their way). A door you leave open, or a guard lying on the floor (knocked out or dead, seen in light or up
   close), makes a guard suspicious and sends him to look; he shuts the door.
+
+- ✔ v0.9.1: Camera follows the mouse without clicking or dragging (Mat's request); edge turning when pointer lock is refused.

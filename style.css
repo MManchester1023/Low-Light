@@ -1,6 +1,7 @@
 html, body { margin: 0; height: 100%; overflow: hidden; background: #050608; color: #e6e4dc;
   font-family: "Segoe UI", system-ui, sans-serif; font-weight: 300; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9); }
 #view { display: block; width: 100vw; height: 100vh; }
+body.playing #view { cursor: none; } /* mouse look works without pointer lock too */
 
 #hud { position: fixed; inset: 0; pointer-events: none; }
 #objective { position: absolute; top: 33px; left: 14px; font-size: 14px; opacity: 0.9; }
