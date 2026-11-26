@@ -6,15 +6,14 @@ Roadmap and priorities. Finished items move to `completed.md` with a ✔ and the
 
 The prototype asks one question: is sneaking up on a single guard tense and satisfying?
 
-1. Noise: footsteps emit a radius by speed (crouch 1 m, walk 4 m, run 10 m) that guards can hear.
-2. Search behavior: a guard at high suspicion searches the area, then returns to patrol warier.
-3. Grab and knockout: one grab and one knockout from behind an unaware guard.
-4. Hand it to someone else and watch them play. Pass test: the tester waits, plans an approach and reacts
+1. Search behavior: a guard at high suspicion searches the area, then returns to patrol warier.
+2. Grab and knockout: one grab and one knockout from behind an unaware guard.
+3. Hand it to someone else and watch them play. Pass test: the tester waits, plans an approach and reacts
    out loud to a near miss. If not, fix detection before adding content.
 
 ## Next: after the prototype passes
 
-5. Evidence: dead lights, open doors and found bodies raise suspicion (guards don't react to lights going off yet).
+5. Evidence: open doors and found bodies raise suspicion (dead lights are done).
 6. Test one paired takedown clip in Three.js before buying an animation pack.
 7. Check each animation license for browser delivery, where players can extract model files.
 8. Throwable distraction object.

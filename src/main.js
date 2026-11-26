@@ -2,7 +2,8 @@
 
 import * as THREE from 'three';
 import { buildLevel } from './level.js';
-import { Player } from './player.js';
+import { Player, MAX_NOISE } from './player.js';
+import { NightVision } from './nightvision.js';
 import { Guard } from './guard.js';
 import { lightAt } from './lighting.js';
 import { Hud } from './hud.js';
@@ -26,6 +27,17 @@ const player = new Player(scene);
 const guard = new Guard(scene, level.guardRoute);
 const hud = new Hud(camera);
 const input = new Input(canvas);
+const nv = new NightVision(renderer);
+
+// Debug noise ring around the player (shown with V, like the guard view cone).
+const noiseRing = new THREE.Mesh(
+  new THREE.RingGeometry(0.97, 1, 48),
+  new THREE.MeshBasicMaterial({ color: 0x66aaff, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide })
+);
+noiseRing.rotation.x = -Math.PI / 2;
+noiseRing.visible = false;
+scene.add(noiseRing);
+let showDebug = false;
 
 const CAM_DIST = 3.0;
 const SHOULDER = 0.45;
@@ -37,7 +49,8 @@ const game = {
   time: 0,
   maxSuspicion: 0,
   cam: { yaw: 0, pitch: -0.2 },
-  level, player, guard, camera,
+  level, player, guard, camera, nv,
+  noise: { pos: new THREE.Vector3(), radius: 0 },
   interact: null,
 };
 window.game = game; // for scripted checks
@@ -51,6 +64,8 @@ function reset() {
   game.state = 'playing';
   game.time = 0;
   game.maxSuspicion = 0;
+  game.noise = { pos: new THREE.Vector3(), radius: 0 };
+  nv.enabled = false;
   if (input.active) hud.hideOverlay();
   else hud.showOverlay('Low Light', 'Click to play');
 }
@@ -100,7 +115,8 @@ function step(dt, inp) {
     const sampleLight = samples.map((p) => lightAt(p, level));
     player.lightLevel = (sampleLight[0] + sampleLight[1] + sampleLight[2]) / 3;
 
-    guard.update(dt, player, samples, sampleLight, level);
+    game.noise = { pos: player.pos.clone(), radius: player.noiseRadius };
+    guard.update(dt, player, samples, sampleLight, level, game.noise);
     game.maxSuspicion = Math.max(game.maxSuspicion, guard.suspicion);
     game.time += dt;
 
@@ -112,7 +128,8 @@ function step(dt, inp) {
     if (guard.suspicion >= 100) onSpotted();
   }
   if (inp.pressed('KeyR')) reset();
-  if (inp.pressed('KeyV')) guard.toggleCone();
+  if (inp.pressed('KeyV')) { guard.toggleCone(); showDebug = !showDebug; }
+  if (inp.pressed('KeyN')) nv.toggle();
 }
 
 function updateCamera() {
@@ -142,6 +159,8 @@ function updateCamera() {
 function updateHud() {
   hud.update({
     light: player.lightLevel,
+    noise: game.noise.radius / MAX_NOISE,
+    nv: nv.enabled,
     stance: player.stance,
     prompt: game.state === 'playing' && game.interact ? game.interact.label() : '',
     guard: {
@@ -158,6 +177,7 @@ function resize() {
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  nv.setSize(w, h);
 }
 window.addEventListener('resize', resize);
 
@@ -183,7 +203,13 @@ function frame(now) {
   input.endFrame();
   updateCamera();
   updateHud();
-  renderer.render(scene, camera);
+  const r = game.noise.radius;
+  noiseRing.visible = showDebug && r > 0;
+  if (noiseRing.visible) {
+    noiseRing.scale.setScalar(r);
+    noiseRing.position.set(player.pos.x, 0.03, player.pos.z);
+  }
+  nv.render(scene, camera, dt);
   requestAnimationFrame(frame);
 }
 

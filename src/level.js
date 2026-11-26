@@ -165,6 +165,7 @@ export function buildLevel(scene) {
     groupLeds[group] = ledMat;
     interactables.push({
       kind: 'switch',
+      group,
       pos: new THREE.Vector3(ipos[0], 0, ipos[1]),
       range: 1.4,
       label: () => (groupIsOn(group) ? 'E: turn lights off' : 'E: turn lights on'),
@@ -183,6 +184,7 @@ export function buildLevel(scene) {
   groupLeds.lamp = lampLedMat;
   interactables.push({
     kind: 'switch',
+    group: 'lamp',
     pos: new THREE.Vector3(9.9, 0, -6.6),
     range: 1.4,
     label: () => (lamp.on ? 'E: turn lamp off' : 'E: turn lamp on'),
@@ -209,6 +211,16 @@ export function buildLevel(scene) {
     { x: 10, z: -2, pause: 2, lookYaw: Math.PI / 2 },
   ];
 
+  // ---------- Guard nav nodes (doorways and open floor spots, all clear of furniture) ----------
+  const navNodes = [
+    [2, -1.5], [0.5, -1.5], [3.5, -1.5],            // middle doorway
+    [2, 7], [0.5, 7], [3, 4.7],                      // south doorway
+    [-3, -1.5], [-9, 0.5], [-10, 5], [-3, 6.5], [-7, -7], [-1, -7], [-10, -5],  // west room
+    [6, -6], [10, -2], [10, 6], [6, 6], [8.5, -4], [11, 2], [5, 3],            // east room
+  ].map(([x, z]) => new THREE.Vector3(x, 0, z));
+
+  const switchFor = (group) => interactables.find((i) => i.kind === 'switch' && i.group === group);
+
   function reset() {
     for (const l of lights) setLightOn(l, true);
     updateLeds();
@@ -221,6 +233,8 @@ export function buildLevel(scene) {
     interactables,
     playerStart: { x: -10, z: 7, yaw: -Math.PI / 3 },
     guardRoute,
+    navNodes,
+    switchFor,
     setGroup,
     reset,
   };

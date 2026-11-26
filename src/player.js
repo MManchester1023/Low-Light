@@ -5,6 +5,8 @@ import { resolveCircle } from './collision.js';
 import { lerp, turnToward } from './utils.js';
 
 const SPEED = { crouch: 1.5, crouchRun: 2.4, walk: 3.0, run: 5.5 }; // m/s, guesses
+const NOISE = { crouch: 1, walk: 4, run: 10 }; // m, design doc values
+export const MAX_NOISE = NOISE.run;
 const BODY_H = 1.74;
 
 export class Player {
@@ -93,6 +95,20 @@ export class Player {
       new THREE.Vector3(x, lerp(1.2, 0.7, c), z),
       new THREE.Vector3(x, lerp(1.65, 0.98, c), z),
     ];
+  }
+
+  /**
+   * Footstep noise radius in metres (0 when still). Full radius at the stance's full speed:
+   * crouch 1 m, walk 4 m, run 10 m (design doc starting values).
+   */
+  get noiseRadius() {
+    const v = this.speed;
+    if (v < 0.2) return 0;
+    let radius, full;
+    if (this.crouched) { radius = NOISE.crouch; full = SPEED.crouch; }
+    else if (this.running && v > SPEED.walk + 0.2) { radius = NOISE.run; full = SPEED.run; }
+    else { radius = NOISE.walk; full = SPEED.walk; }
+    return radius * Math.min(1, v / full);
   }
 
   /** Camera pivot height above the feet. */
