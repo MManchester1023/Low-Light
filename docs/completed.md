@@ -26,3 +26,4 @@
   after 8 s and counts as spotted. Press E again to knock him out: 3 s struggle (1.5 m noise), then he slumps and
   stays down. Takedown prompts take priority over switches. Capsule pose animation only, no animation assets.
 - ✔ v0.3: Rating, Shadow or Ghost: finishing with a guard touched gives Shadow; untouched gives Ghost.
+- ✔ v0.3.1: Fix: the interact prompt overlapped the top of the LIGHT/NOISE meter at the bottom of the screen.
