@@ -13,7 +13,7 @@ Low Light (working title) is a third-person stealth puzzle game played level by 
 
 ## Levels and scoring
 
-Each level is a self-contained puzzle: one objective, at least two ways in, and an instant restart. Replay comes from earning a better rating.
+Each level is a self-contained puzzle: one objective, at least two ways in but the levels should be able to be completed however the player wants within the confines of the game, and an instant restart. Replay comes from earning a better rating.
 
 | Rating | How you earn it |
 | --- | --- |
@@ -25,11 +25,11 @@ Each new level adds one idea, such as switchable lights, noisy floors or overlap
 
 ## Tension and detection
 
-Tension comes from guards noticing you gradually, so there is always a moment to react. Each guard has a suspicion meter from 0 to 100. Starting numbers below are guesses to tune in playtests.
+Tension comes from guards noticing you gradually, so there is always a moment to react. Each guard has a suspicion meter from 0 to 100. Starting numbers below are guesses to tune in playtests. Guards should "remember" things that happen like heard noises, seen players or turned off lights, and patrol those areas more often
 
 | Input | How it works | Starting value |
 | --- | --- | --- |
-| Sight | View cone plus line of sight; fills faster when closer and brighter | 90° cone, 12 m range |
+| Sight | View cone plus line of sight; fills faster when closer and brighter | 120° cone, 12 m range |
 | Light | Sampled at head, chest and feet; shown on a player light meter | Full dark nearly invisible beyond 2 m |
 | Noise | Footsteps and impacts emit a radius based on speed and surface | Crouch 1 m, walk 4 m, run 10 m |
 | Evidence | Bodies, dead lights and open doors raise suspicion | A found body triggers a search, there will be places to hide bodies |

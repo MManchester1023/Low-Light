@@ -231,6 +231,7 @@ export function buildLevel(scene) {
     boxes,
     lights,
     interactables,
+    bottleSpot: { x: -6, y: 1.1, z: 4 }, // on the crate near the start
     playerStart: { x: -10, z: 7, yaw: -Math.PI / 3 },
     guardRoute,
     navNodes,

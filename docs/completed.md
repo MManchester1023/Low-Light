@@ -27,3 +27,7 @@
   stays down. Takedown prompts take priority over switches. Capsule pose animation only, no animation assets.
 - ✔ v0.3: Rating, Shadow or Ghost: finishing with a guard touched gives Shadow; untouched gives Ghost.
 - ✔ v0.3.1: Fix: the interact prompt overlapped the top of the LIGHT/NOISE meter at the bottom of the screen.
+- ✔ v0.4: Throwable distraction object: a bottle on the crate near the start. E picks it up, hold G to aim
+  (arc line and landing ring), release to throw. It smashes on the first thing it hits with an 8 m noise
+  (halved through walls); a guard who hears it turns to it, walks over and looks around.
+- ✔ v0.4: Guard view cone widened from 90° to 120° to match the design doc.

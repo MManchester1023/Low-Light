@@ -9,6 +9,7 @@ export class Hud {
     this.stanceEl = document.querySelector('#meter .stance');
     this.noiseFill = document.querySelector('#meter .noise-fill');
     this.nvEl = document.getElementById('nv');
+    this.heldEl = document.getElementById('held');
     this.promptEl = document.getElementById('prompt');
     this.tag = document.getElementById('guardTag');
     this.tagIcon = this.tag.querySelector('.icon');
@@ -20,7 +21,8 @@ export class Hud {
     this.overlaySmall = this.overlay.querySelector('.small');
   }
 
-  update({ light = 0, stance = '', prompt = '', guard = null, noise = 0, nv = false } = {}) {
+  update({ light = 0, stance = '', prompt = '', guard = null, noise = 0, nv = false, held = '' } = {}) {
+    if (this.heldEl.textContent !== held) this.heldEl.textContent = held;
     const nz = Math.max(0, Math.min(1, noise));
     this.noiseFill.style.width = (nz * 100).toFixed(1) + '%';
     // muted grey-blue -> orange-red

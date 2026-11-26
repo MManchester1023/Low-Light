@@ -1,8 +1,8 @@
 # Low Light: rules for Claude
 
-## Project files
+## Project files (all in `docs/`)
 
-- `Low Light Stealth Game Design Doc.md`: the game design reference. Check it before making design decisions.
+- `Design Doc.md`: the game design reference. Check it before making design decisions.
 - `status.md`: the roadmap and priority list. Use it to pick "the next thing".
 - `completed.md`: finished items, moved here from `status.md` with a ✔ and the version.
 - `changelog.md`: one row per version for every change made during the project.

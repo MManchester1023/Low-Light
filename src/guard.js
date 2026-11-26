@@ -12,7 +12,7 @@ import { findPath } from './nav.js';
 import { clamp, turnToward, wrapAngle, yawFromDir } from './utils.js';
 
 const EYE_H = 1.65;
-const FOV_HALF = Math.PI / 4;   // 90° cone
+const FOV_HALF = Math.PI / 3;   // 120° cone (design doc)
 const RANGE = 12;               // m
 const FILL = 80;                // points/s at full visibility, point blank
 const NOISE_FILL = 60;          // points/s when a noise is right next to the guard
@@ -24,6 +24,7 @@ const WARY_MUL = 1.3;           // fill multiplier after a guard has investigate
 const DARK_NOTICE = 14;         // m: a guard notices a dead light he has line of sight to within this range
 const HEAR_REACT_AT = 12;       // a heard noise this loud (in suspicion) sends him to check it out
 const SUSPICIOUS_AT = 25;
+const IMPACT_SUSPICION = 20;    // added by a heard smash (thrown bottle), scaled by loudness
 const GRAB_MAX = 8;             // s before a grabbed guard struggles free
 export const KO_TIME = 3;       // s the knockout takes (design doc: about 3 s)
 const TAKEDOWN_RANGE = 1.4;     // m
@@ -173,6 +174,23 @@ export class Guard {
     if (segmentBlocked(from, to, boxes)) reach *= WALL_MUFFLE;
     if (d > reach) return 0;
     return 1 - 0.5 * (d / reach);
+  }
+
+  /**
+   * A one-off loud noise (a thrown bottle smashing). If he hears it he turns to it, then walks over
+   * to check it out. Sound alone still can't take suspicion past NOISE_CAP. Returns true if heard.
+   */
+  hearImpact(pos, radius, boxes) {
+    if (this.disabled || this.state === 'alert') return false;
+    const loud = this.listen({ pos, radius }, boxes);
+    if (loud <= 0) return false;
+    this.suspicion = Math.min(NOISE_CAP, Math.max(this.suspicion, SUSPICIOUS_AT) + IMPACT_SUSPICION * loud);
+    this.stimulus.set(pos.x, 0, pos.z);
+    this.stimulusKind = 'sound';
+    this.sinceStimulus = 0;
+    if (this.state === 'investigate' || this.state === 'look') this.setState('investigate');
+    else if (this.state !== 'suspicious') { this.relight = null; this.setState('suspicious'); }
+    return true;
   }
 
   /** Remember dead lights he can see; forget ones that came back on. */

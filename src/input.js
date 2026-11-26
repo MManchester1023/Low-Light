@@ -3,7 +3,7 @@
 // panes refuse it, so without a lock you look around by dragging the mouse (or with the arrow keys).
 
 const GAME_KEYS = new Set(['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight',
-  'KeyC', 'KeyE', 'KeyR', 'KeyV', 'KeyP', 'KeyN', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+  'KeyC', 'KeyE', 'KeyG', 'KeyR', 'KeyV', 'KeyP', 'KeyN', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
 
 export class Input {
   constructor(canvas) {

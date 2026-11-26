@@ -15,8 +15,11 @@ The prototype asks one question: is sneaking up on a single guard tense and sati
 3. Evidence: open doors and found bodies raise suspicion (dead lights are done).
 4. Test one paired takedown clip in Three.js before buying an animation pack.
 5. Check each animation license for browser delivery, where players can extract model files.
-6. Throwable distraction object.
-7. Knocked-out guards can be found and woken (needs a second guard).
+6. Knocked-out guards can be found and woken (needs a second guard).
+7. Guard memory: guards remember where they heard noises, saw the player or found dead lights, and patrol
+   those areas more often for the rest of the mission (design doc, Tension and detection).
+8. Level design rule from the design doc: levels should be completable however the player wants within the
+   game's rules, not just by the two planned routes. Keep this in mind when building the next level.
 
 ## Open questions for Mat
 

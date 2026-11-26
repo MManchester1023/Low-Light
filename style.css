@@ -21,6 +21,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #050608; col
 #meter .noise-fill { height: 100%; width: 0%; background: #5f6a7d; }
 #nv { position: absolute; left: 100%; top: 0; margin-left: 14px; display: none; font-size: 13px; font-weight: 600;
   letter-spacing: 3px; color: #5dff6e; text-shadow: 0 0 6px rgba(93, 255, 110, 0.7); }
+#held { position: absolute; right: 100%; top: 0; margin-right: 14px; font-size: 11px; letter-spacing: 2px;
+  opacity: 0.8; white-space: nowrap; }
+#held:empty { display: none; }
 #meter .stance { font-size: 11px; letter-spacing: 2px; opacity: 0.6; margin-top: 4px; }
 
 #guardTag { position: absolute; left: 0; top: 0; display: none; text-align: center; will-change: transform; }

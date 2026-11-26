@@ -6,6 +6,7 @@ import { Player, MAX_NOISE } from './player.js';
 import { NightVision } from './nightvision.js';
 import { Guard, KO_TIME } from './guard.js';
 import { lightAt } from './lighting.js';
+import { Bottle, THROW_NOISE, throwVelocity, predictArc } from './throwable.js';
 import { Hud } from './hud.js';
 import { Input, NullInput } from './input.js';
 import { segmentFirstHit, resolveCircle } from './collision.js';
@@ -28,6 +29,32 @@ const guard = new Guard(scene, level.guardRoute);
 const hud = new Hud(camera);
 const input = new Input(canvas);
 const nv = new NightVision(renderer);
+const bottle = new Bottle(scene, level.bottleSpot);
+level.interactables.push({
+  kind: 'pickup',
+  pos: new THREE.Vector3(level.bottleSpot.x, 0, level.bottleSpot.z),
+  range: 1.4,
+  available: () => bottle.state === 'rest',
+  label: () => 'E: pick up bottle',
+  use: () => { bottle.pickUp(); game.holding = 'bottle'; },
+});
+
+// Aim line for the throw (hold G), with a ring where it will land.
+const MAX_ARC = 130;
+const aimLine = new THREE.Line(
+  new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX_ARC * 3), 3)),
+  new THREE.LineBasicMaterial({ color: 0xc8e0ff, transparent: true, opacity: 0.55, depthWrite: false })
+);
+aimLine.frustumCulled = false;
+aimLine.visible = false;
+scene.add(aimLine);
+const aimMark = new THREE.Mesh(
+  new THREE.RingGeometry(0.18, 0.24, 24),
+  new THREE.MeshBasicMaterial({ color: 0xc8e0ff, transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide })
+);
+aimMark.visible = false;
+scene.add(aimMark);
+const arcPts = [];
 
 // Debug noise ring around the player (shown with V, like the guard view cone).
 const noiseRing = new THREE.Mesh(
@@ -49,7 +76,7 @@ const game = {
   time: 0,
   maxSuspicion: 0,
   cam: { yaw: 0, pitch: -0.2 },
-  level, player, guard, camera, nv,
+  level, player, guard, camera, nv, bottle,
   noise: { pos: new THREE.Vector3(), radius: 0 },
   interact: null,
 };
@@ -66,6 +93,10 @@ function reset() {
   game.maxSuspicion = 0;
   game.touched = false; // any guard grabbed or knocked out (affects the rating)
   game.noise = { pos: new THREE.Vector3(), radius: 0 };
+  game.holding = null;   // 'bottle' while carrying it
+  game.aiming = false;   // G held with something to throw
+  game.impact = null;    // { pos, radius, t } last smash, for the V debug ring
+  bottle.reset();
   nv.enabled = false;
   if (input.active) hud.hideOverlay();
   else hud.showOverlay('Low Light', 'Click to play');
@@ -75,6 +106,7 @@ function nearestInteractable() {
   let best = null;
   let bestD = Infinity;
   for (const it of level.interactables) {
+    if (it.available && !it.available()) continue;
     const d = Math.hypot(it.pos.x - player.pos.x, it.pos.z - player.pos.z);
     if (d <= it.range && d < bestD) { best = it; bestD = d; }
   }
@@ -104,6 +136,29 @@ function onComplete() {
     `Rating: ${rating} · Time ${fmtTime(game.time)}`,
     `Guard's highest suspicion: ${Math.round(game.maxSuspicion)}% · Press R to play again`
   );
+}
+
+// ---------- Throwing ----------
+function throwOrigin() {
+  return new THREE.Vector3(player.pos.x - Math.sin(game.cam.yaw) * 0.35, player.eyeHeight + 0.1,
+    player.pos.z - Math.cos(game.cam.yaw) * 0.35);
+}
+
+function updateThrow(dt, inp) {
+  const canThrow = game.holding && !player.grabbing && !player.locked;
+  const gDown = inp.down('KeyG');
+  if (canThrow && gDown) game.aiming = true;
+  else if (game.aiming && canThrow && !gDown) {
+    bottle.throw(throwOrigin(), throwVelocity(game.cam.yaw, game.cam.pitch));
+    game.holding = null;
+    game.aiming = false;
+  } else game.aiming = false;
+
+  const hit = bottle.update(dt, level.boxes);
+  if (hit) {
+    game.impact = { pos: hit.clone(), radius: THROW_NOISE, t: game.time };
+    game.impactHeard = guard.hearImpact(hit, THROW_NOISE, level.boxes);
+  }
 }
 
 // ---------- Takedowns ----------
@@ -161,6 +216,7 @@ function step(dt, inp) {
     player.lightLevel = (sampleLight[0] + sampleLight[1] + sampleLight[2]) / 3;
 
     holdGuard();
+    updateThrow(dt, inp);
     game.noise = { pos: player.pos.clone(), radius: player.locked ? KO_NOISE : player.noiseRadius };
     guard.update(dt, player, samples, sampleLight, level, game.noise);
     if (player.locked && guard.state === 'down') player.locked = false; // knockout finished
@@ -188,6 +244,7 @@ function step(dt, inp) {
     }
     if (guard.suspicion >= 100) onSpotted();
   }
+  if (game.state !== 'playing') game.aiming = false;
   if (inp.pressed('KeyR')) reset();
   if (inp.pressed('KeyV')) { guard.toggleCone(); showDebug = !showDebug; }
   if (inp.pressed('KeyN')) nv.toggle();
@@ -222,6 +279,7 @@ function updateHud() {
     light: player.lightLevel,
     noise: game.noise.radius / MAX_NOISE,
     nv: nv.enabled,
+    held: game.holding ? (game.aiming ? 'BOTTLE · AIMING' : 'BOTTLE · G') : '',
     stance: player.stance,
     prompt: game.state !== 'playing' ? ''
       : game.takedown === 'grab' ? 'E: grab'
@@ -236,6 +294,20 @@ function updateHud() {
       hidden: guard.state === 'ko' || guard.state === 'down',
     },
   });
+}
+
+function updateAim() {
+  aimLine.visible = aimMark.visible = game.aiming;
+  if (!game.aiming) return;
+  predictArc(throwOrigin(), throwVelocity(game.cam.yaw, game.cam.pitch), level.boxes, arcPts);
+  const n = Math.min(MAX_ARC, arcPts.length);
+  const arr = aimLine.geometry.attributes.position.array;
+  for (let i = 0; i < n; i++) { arr[i * 3] = arcPts[i].x; arr[i * 3 + 1] = arcPts[i].y; arr[i * 3 + 2] = arcPts[i].z; }
+  aimLine.geometry.attributes.position.needsUpdate = true;
+  aimLine.geometry.setDrawRange(0, n);
+  const end = arcPts[n - 1];
+  aimMark.position.set(end.x, Math.max(0.03, end.y + 0.02), end.z);
+  aimMark.rotation.set(-Math.PI / 2, 0, 0); // flat; fine for floor landings, close enough on walls
 }
 
 function resize() {
@@ -271,11 +343,14 @@ function frame(now) {
   updateCamera();
   updateHud();
   const r = game.noise.radius;
-  noiseRing.visible = showDebug && r > 0;
+  const imp = game.impact && game.time - game.impact.t < 0.8 ? game.impact : null;
+  noiseRing.visible = showDebug && (r > 0 || !!imp);
   if (noiseRing.visible) {
-    noiseRing.scale.setScalar(r);
-    noiseRing.position.set(player.pos.x, 0.03, player.pos.z);
+    const src = imp ? imp.pos : player.pos;
+    noiseRing.scale.setScalar(imp ? imp.radius : r);
+    noiseRing.position.set(src.x, 0.03, src.z);
   }
+  updateAim();
   nv.render(scene, camera, dt);
   requestAnimationFrame(frame);
 }
