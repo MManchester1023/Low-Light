@@ -7,25 +7,27 @@ Roadmap and priorities. Finished items move to `completed.md` with a ✔ and the
 The prototype asks one question: is sneaking up on a single guard tense and satisfying?
 
 1. Search behavior: a guard at high suspicion searches the area, then returns to patrol warier.
-2. Hand it to someone else and watch them play. Pass test: the tester waits, plans an approach and reacts
+2. Body hiding: carry a knocked-out guard and leave him in a hiding spot (dark corner, behind cover, a
+   cupboard). Part of the prototype baseline (Mat, 2026-11-26). A found body triggers a search once
+   evidence is in (item 5).
+3. Hand it to someone else and watch them play. Pass test: the tester waits, plans an approach and reacts
    out loud to a near miss. If not, fix detection before adding content.
 
 ## Next: after the prototype passes
 
-3. Evidence: open doors and found bodies raise suspicion (dead lights are done).
-4. Test one paired takedown clip in Three.js before buying an animation pack.
-5. Check each animation license for browser delivery, where players can extract model files.
-6. Knocked-out guards can be found and woken (needs a second guard).
-7. Level design rule from the design doc: levels should be completable however the player wants within the
+4. Full alert: instead of failing the level, guards share what they know with each other and hunt the
+   player down to kill. Needs more than one guard and some combat or escape.
+5. Evidence: open doors and found bodies raise suspicion (dead lights are done).
+6. Test one paired takedown clip in Three.js before buying an animation pack.
+7. Check each animation license for browser delivery, where players can extract model files.
+8. Knocked-out guards can be found and woken (needs a second guard).
+9. Level design rule from the design doc: levels should be completable however the player wants within the
    game's rules, not just by the two planned routes. Keep this in mind when building the next level.
 
-## Open questions for Mat
+## Decisions
 
-- Guard states diagram: the embedded diagram didn't come through in the design doc. The prototype uses
-  patrol → suspicious → investigate → look around → alert; confirm or send the diagram.
-- Being spotted fails the level in the prototype (there's no combat or escape yet). The design's "Cleared"
-  rating implies the level can continue after an alert; decide what full alert does once combat exists.
-- Body hiding: the design's Evidence row mentions places to hide bodies, but it's listed as out of scope for
-  the prototype. Assumed: later, not now.
-- Lethal takedown (hold E) isn't in yet: the design says holding the button makes it lethal. Grab-then-E
-  knocks out. Confirm the two-press flow (grab, then knock out) or prefer a single press from behind.
+- Guard states: patrol → suspicious → investigate → look around → alert is fine (plus relight and memory
+  check detours).
+- Takedown: two presses, grab then knock out. Lethal (hold E) comes later.
+- Body hiding is in the prototype, not later.
+- Full alert becomes a guard hunt (item 4); until then, being spotted fails the level.
