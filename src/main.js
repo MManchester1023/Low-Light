@@ -30,6 +30,7 @@ const input = new Input(canvas);
 const CAM_DIST = 3.0;
 const SHOULDER = 0.45;
 const SENS = 0.0025;
+const KEY_LOOK = 2.2; // rad/s for arrow-key look
 
 const game = {
   state: 'playing', // 'playing' | 'spotted' | 'complete'
@@ -50,7 +51,7 @@ function reset() {
   game.state = 'playing';
   game.time = 0;
   game.maxSuspicion = 0;
-  if (input.locked) hud.hideOverlay();
+  if (input.active) hud.hideOverlay();
   else hud.showOverlay('Low Light', 'Click to play');
 }
 
@@ -88,8 +89,10 @@ function onComplete() {
 /** One simulation step. */
 function step(dt, inp) {
   if (game.state === 'playing') {
-    game.cam.yaw -= inp.mouseDX * SENS;
-    game.cam.pitch = clamp(game.cam.pitch - inp.mouseDY * SENS, -1.1, 0.6);
+    const keyYaw = (inp.down('ArrowLeft') ? 1 : 0) - (inp.down('ArrowRight') ? 1 : 0);
+    const keyPitch = (inp.down('ArrowUp') ? 1 : 0) - (inp.down('ArrowDown') ? 1 : 0);
+    game.cam.yaw -= inp.mouseDX * SENS - keyYaw * KEY_LOOK * dt;
+    game.cam.pitch = clamp(game.cam.pitch - inp.mouseDY * SENS + keyPitch * KEY_LOOK * 0.6 * dt, -1.1, 0.6);
 
     player.update(dt, inp, game.cam.yaw, level.boxes);
 
@@ -158,18 +161,24 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 
-// Pause while the mouse isn't captured.
-document.addEventListener('pointerlockchange', () => {
+// Click starts play; Esc or P pauses.
+const helpEl = document.getElementById('help');
+const helpBase = helpEl.textContent;
+input.onActiveChange = (active) => {
   if (game.state !== 'playing') return;
-  if (input.locked) hud.hideOverlay();
-  else hud.showOverlay('Paused', 'Click to play');
+  if (active) hud.hideOverlay();
+  else hud.showOverlay('Paused', 'Click to play', 'Esc or P pauses');
+};
+document.addEventListener('pointerlockchange', () => {
+  helpEl.textContent = input.locked ? helpBase : `${helpBase} · Drag the mouse or use arrow keys to look`;
 });
+helpEl.textContent = `${helpBase} · Drag the mouse or use arrow keys to look`;
 
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  if (input.locked || game.state !== 'playing') step(dt, input);
+  if (input.active || game.state !== 'playing') step(dt, input);
   else if (input.pressed('KeyR')) reset();
   input.endFrame();
   updateCamera();

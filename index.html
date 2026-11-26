@@ -33,5 +33,20 @@
   </div>
 
   <script type="module" src="src/main.js"></script>
+  <script>
+    // If the game code never loads (opened as a file, or the Three.js download failed), say so.
+    setTimeout(function () {
+      if (window.game) return;
+      var msg = document.querySelector('#overlay .msg');
+      var small = document.querySelector('#overlay .small');
+      if (location.protocol === 'file:') {
+        msg.textContent = "The game can't load when index.html is opened as a file.";
+        small.textContent = 'Run "node serve.js" in this folder, then open http://localhost:8080';
+      } else {
+        msg.textContent = "The game didn't load.";
+        small.textContent = 'Check your internet connection (Three.js loads from cdn.jsdelivr.net), then reload.';
+      }
+    }, 4000);
+  </script>
 </body>
 </html>
