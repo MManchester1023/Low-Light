@@ -15,6 +15,8 @@ tracking files.
 
 ## Working with Mat
 
+- **pass off lesser work to subagents**: have the subagent and effort model of your choice work on lesser, simple tasks while opus 5.5 handles all of the main, complex tasks.
+
 - **No messages while working**: no progress lines, not even when the app asks for an update. Only when the
   work is done: one reply of a few short lines covering what was done (item numbers), and what Mat needs to do
   or decide. No per-item paragraphs unless he asks.

@@ -4,8 +4,8 @@ import * as THREE from 'three';
 import { resolveCircle } from './collision.js';
 import { lerp, turnToward } from './utils.js';
 
-const SPEED = { crouch: 1.5, crouchRun: 2.4, walk: 3.0, run: 5.5 }; // m/s, guesses
-const NOISE = { crouch: 1, walk: 4, run: 10 }; // m, design doc values
+const SPEED = { crouch: 1.5, crouchRun: 2.4, walk: 3.0, run: 5.5, drag: 1.1 }; // m/s, guesses
+const NOISE = { crouch: 1, walk: 4, run: 10, drag: 2.5 }; // m, design doc values
 export const MAX_NOISE = NOISE.run;
 const BODY_H = 1.74;
 
@@ -39,6 +39,8 @@ export class Player {
     this.crouched = false;
     this.crouchBlend = 0;
     this.running = false;
+    this.grabbing = false; // holding a guard: slow, faces where the camera looks
+    this.locked = false;   // mid-knockout: can't move
     this.applyMesh();
   }
 
@@ -52,17 +54,18 @@ export class Player {
   }
 
   update(dt, input, camYaw, boxes) {
-    if (input.pressed('KeyC')) this.crouched = !this.crouched;
+    if (input.pressed('KeyC') && !this.grabbing && !this.locked) this.crouched = !this.crouched;
 
     const f = (input.down('KeyW') ? 1 : 0) - (input.down('KeyS') ? 1 : 0);
     const s = (input.down('KeyD') ? 1 : 0) - (input.down('KeyA') ? 1 : 0);
     let mx = -Math.sin(camYaw) * f + Math.cos(camYaw) * s;
     let mz = -Math.cos(camYaw) * f - Math.sin(camYaw) * s;
+    if (this.locked) { mx = 0; mz = 0; }
     const len = Math.hypot(mx, mz);
     if (len > 0) { mx /= len; mz /= len; }
 
-    this.running = input.down('ShiftLeft') || input.down('ShiftRight');
-    const speed = this.crouched
+    this.running = !this.grabbing && (input.down('ShiftLeft') || input.down('ShiftRight'));
+    const speed = this.grabbing ? SPEED.drag : this.crouched
       ? (this.running ? SPEED.crouchRun : SPEED.crouch)
       : (this.running ? SPEED.run : SPEED.walk);
 
@@ -73,7 +76,8 @@ export class Player {
     this.pos.z += this.vel.z * dt;
     resolveCircle(this.pos, this.radius, boxes);
 
-    if (len > 0) this.facing = turnToward(this.facing, Math.atan2(-mx, -mz), 12 * dt);
+    if (this.grabbing) this.facing = turnToward(this.facing, camYaw, 3 * dt);
+    else if (len > 0 && !this.locked) this.facing = turnToward(this.facing, Math.atan2(-mx, -mz), 12 * dt);
     this.crouchBlend += ((this.crouched ? 1 : 0) - this.crouchBlend) * (1 - Math.exp(-10 * dt));
     this.applyMesh();
   }
@@ -105,7 +109,8 @@ export class Player {
     const v = this.speed;
     if (v < 0.2) return 0;
     let radius, full;
-    if (this.crouched) { radius = NOISE.crouch; full = SPEED.crouch; }
+    if (this.grabbing) { radius = NOISE.drag; full = SPEED.drag; }
+    else if (this.crouched) { radius = NOISE.crouch; full = SPEED.crouch; }
     else if (this.running && v > SPEED.walk + 0.2) { radius = NOISE.run; full = SPEED.run; }
     else { radius = NOISE.walk; full = SPEED.walk; }
     return radius * Math.min(1, v / full);

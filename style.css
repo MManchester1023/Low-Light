@@ -26,6 +26,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #050608; col
 #guardTag .bar { width: 60px; height: 5px; margin: 0 auto; background: rgba(0, 0, 0, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.3); box-sizing: border-box; }
 #guardTag .fill { height: 100%; width: 0%; background: #e8c547; }
+/* grip mode: wider, taller bar (ID selector needed to beat the #guardTag .bar rule above) */
+#guardTag.grip .bar { width: 120px; height: 7px; }
 
 #overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
   background: rgba(0, 0, 0, 0.6); cursor: pointer; }

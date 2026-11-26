@@ -22,7 +22,12 @@ const DECAY = 10;               // points/s once the stimulus is lost
 const HOLD = 1.0;               // s before decay starts
 const WARY_MUL = 1.3;           // fill multiplier after a guard has investigated
 const DARK_NOTICE = 14;         // m: a guard notices a dead light he has line of sight to within this range
+const HEAR_REACT_AT = 12;       // a heard noise this loud (in suspicion) sends him to check it out
 const SUSPICIOUS_AT = 25;
+const GRAB_MAX = 8;             // s before a grabbed guard struggles free
+export const KO_TIME = 3;       // s the knockout takes (design doc: about 3 s)
+const TAKEDOWN_RANGE = 1.4;     // m
+const REAR_COS = Math.cos((110 * Math.PI) / 180); // player must be in the rear arc (>110° off his facing)
 const INVESTIGATE_AT = 50;
 const CALM_AT = 10;
 const WALK = 1.4;
@@ -45,7 +50,9 @@ export class Guard {
     );
     visor.position.set(0, 1.55, -0.28);
     visor.castShadow = true;
-    this.group.add(body, visor);
+    this.rig = new THREE.Group(); // pivot at the feet: lean back when grabbed, fall when knocked out
+    this.rig.add(body, visor);
+    this.group.add(this.rig);
 
     // Debug view cone on the floor (V toggles). Circle sector centred on local -z.
     const cone = new THREE.Mesh(
@@ -82,8 +89,34 @@ export class Guard {
     this.relight = null;        // { group, sw, flipAt }
     this.path = null;
     this.pathTarget = null;
+    this.stimulusKind = null;   // 'sight' | 'sound'
+    this.grabTime = 0;
+    this.koTime = 0;
+    this.brokeFree = false;
+    this.rig.rotation.set(0, 0, 0);
+    this.rig.position.set(0, 0, 0);
     this.applyMesh();
   }
+
+  /** Out of action or held: no senses, no patrol. */
+  get disabled() {
+    return this.state === 'grabbed' || this.state === 'ko' || this.state === 'down';
+  }
+
+  /** Player close behind an unaware guard. */
+  canTakedown(player) {
+    if (this.disabled || this.state === 'alert' || this.seeing) return false;
+    const dx = player.pos.x - this.pos.x;
+    const dz = player.pos.z - this.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d > TAKEDOWN_RANGE || d < 0.05) return false;
+    return (dx * -Math.sin(this.yaw) + dz * -Math.cos(this.yaw)) / d < REAR_COS;
+  }
+
+  grab() { this.setState('grabbed'); this.grabTime = 0; this.suspicion = 0; }
+  get grip() { return Math.max(0, 1 - this.grabTime / GRAB_MAX); }
+  knockOut() { this.setState('ko'); this.koTime = 0; }
+  breakFree() { this.rig.rotation.x = 0; this.suspicion = 100; this.setState('alert'); }
 
   toggleCone() {
     this.cone.visible = !this.cone.visible;
@@ -91,7 +124,7 @@ export class Guard {
 
   get icon() {
     if (this.state === 'alert') return '!';
-    if (this.state === 'patrol') return '';
+    if (this.state === 'patrol' || this.disabled) return '';
     return '?';
   }
 
@@ -170,6 +203,7 @@ export class Guard {
 
   update(dt, player, samples, sampleLight, level, noise) {
     const boxes = level.boxes;
+    if (this.disabled) { this.updateDisabled(dt); this.applyMesh(); return; }
 
     // --- Senses and the suspicion meter ---
     const mul = this.wary ? WARY_MUL : 1;
@@ -187,6 +221,7 @@ export class Guard {
       this.suspicion = Math.min(NOISE_CAP, this.suspicion + NOISE_FILL * loud * mul * dt);
     }
     if (this.seeing || this.hearing) {
+      this.stimulusKind = this.seeing ? 'sight' : 'sound';
       this.sinceStimulus = 0;
       this.stimulus.set(player.pos.x, 0, player.pos.z);
     } else {
@@ -202,7 +237,7 @@ export class Guard {
 
     switch (this.state) {
       case 'patrol': {
-        if (this.suspicion >= SUSPICIOUS_AT) { this.setState('suspicious'); break; }
+        if (this.suspicion >= SUSPICIOUS_AT || (this.hearing && this.suspicion >= HEAR_REACT_AT)) { this.setState('suspicious'); break; }
         const job = this.pickRelight(level);
         if (job) { this.relight = job; this.setState('relight'); break; }
         this.patrol(dt, boxes, level);
@@ -210,7 +245,7 @@ export class Guard {
       }
 
       case 'relight': {
-        if (this.suspicion >= SUSPICIOUS_AT) { this.setState('suspicious'); break; }
+        if (this.suspicion >= SUSPICIOUS_AT || (this.hearing && this.suspicion >= HEAR_REACT_AT)) { this.setState('suspicious'); break; }
         const job = this.relight;
         const groupOn = level.lights.some((l) => l.group === job.group && l.on);
         if (groupOn) { this.relight = null; this.setState('look'); break; } // someone else switched it on
@@ -227,7 +262,9 @@ export class Guard {
 
       case 'suspicious':
         this.face(this.stimulus, 2.5 * dt);
-        if (this.suspicion >= INVESTIGATE_AT && this.stateTime > 0.8) this.setState('investigate');
+        // A noise always gets checked out; a glimpse only once he is fairly sure.
+        if (this.stimulusKind === 'sound' && this.stateTime > 0.7) this.setState('investigate');
+        else if (this.suspicion >= INVESTIGATE_AT && this.stateTime > 0.8) this.setState('investigate');
         else if (this.suspicion < CALM_AT) this.setState('patrol');
         break;
 
@@ -241,7 +278,7 @@ export class Guard {
         if (this.seeing || this.hearing) {
           this.face(this.stimulus, 3 * dt);
           const far = Math.hypot(this.stimulus.x - this.pos.x, this.stimulus.z - this.pos.z) > 1.5;
-          if (far && this.suspicion >= INVESTIGATE_AT) { this.setState('investigate'); break; }
+          if (far && (this.hearing || this.suspicion >= INVESTIGATE_AT)) { this.setState('investigate'); break; }
         } else {
           this.yaw = wrapAngle(this.yaw + Math.sin(this.stateTime * 1.4) * 1.3 * dt);
         }
@@ -256,6 +293,31 @@ export class Guard {
         break;
     }
     this.applyMesh();
+  }
+
+  updateDisabled(dt) {
+    this.seeing = false;
+    this.hearing = false;
+    this.visibility = 0;
+    if (this.state === 'grabbed') {
+      this.grabTime += dt;
+      this.rig.rotation.x = 0.22 + Math.sin(this.grabTime * 9) * 0.05; // leaning back, squirming
+      this.rig.rotation.z = Math.sin(this.grabTime * 6.3) * 0.08;
+    } else if (this.state === 'ko') {
+      this.koTime += dt;
+      const fade = 1 - this.koTime / KO_TIME;  // struggle weakens
+      this.rig.rotation.x = 0.3 + Math.sin(this.koTime * 11) * 0.09 * fade;
+      this.rig.rotation.z = Math.sin(this.koTime * 8) * 0.12 * fade;
+      if (this.koTime >= KO_TIME) { this.setState('down'); this.koTime = 0; }
+    } else if (this.state === 'down') {
+      // Slump forward onto the floor over ~0.6 s.
+      this.koTime += dt;
+      const t = Math.min(1, this.koTime / 0.6);
+      const e = t * t;
+      this.rig.rotation.x = 0.3 + (-Math.PI / 2 + 0.05 - 0.3) * e;
+      this.rig.rotation.z = 0;
+      this.rig.position.y = 0.33 * e; // capsule radius, so he lies on the floor rather than in it
+    }
   }
 
   patrol(dt, boxes, level) {

@@ -4,11 +4,11 @@ import * as THREE from 'three';
 import { buildLevel } from './level.js';
 import { Player, MAX_NOISE } from './player.js';
 import { NightVision } from './nightvision.js';
-import { Guard } from './guard.js';
+import { Guard, KO_TIME } from './guard.js';
 import { lightAt } from './lighting.js';
 import { Hud } from './hud.js';
 import { Input, NullInput } from './input.js';
-import { segmentFirstHit } from './collision.js';
+import { segmentFirstHit, resolveCircle } from './collision.js';
 import { clamp } from './utils.js';
 
 const canvas = document.getElementById('view');
@@ -64,6 +64,7 @@ function reset() {
   game.state = 'playing';
   game.time = 0;
   game.maxSuspicion = 0;
+  game.touched = false; // any guard grabbed or knocked out (affects the rating)
   game.noise = { pos: new THREE.Vector3(), radius: 0 };
   nv.enabled = false;
   if (input.active) hud.hideOverlay();
@@ -88,17 +89,61 @@ function fmtTime(t) {
 
 function onSpotted() {
   game.state = 'spotted';
-  hud.showOverlay('Spotted', 'The guard saw you.', 'Press R to restart');
+  player.grabbing = false;
+  player.locked = false;
+  const why = guard.brokeFree ? 'The guard broke free of your grip.' : 'The guard saw you.';
+  hud.showOverlay('Spotted', why, 'Press R to restart');
 }
 
 function onComplete() {
   game.state = 'complete';
-  // Prototype: being spotted ends the run, so any finish is a Ghost (no takedowns exist yet).
+  // Being spotted ends the run, so a finish is Ghost (no guard touched) or Shadow (non-lethal takedown).
+  const rating = game.touched ? 'Shadow' : 'Ghost';
   hud.showOverlay(
     'Objective complete',
-    `Rating: Ghost · Time ${fmtTime(game.time)}`,
+    `Rating: ${rating} · Time ${fmtTime(game.time)}`,
     `Guard's highest suspicion: ${Math.round(game.maxSuspicion)}% · Press R to play again`
   );
+}
+
+// ---------- Takedowns ----------
+const HOLD_DIST = 0.6;  // guard held this far in front of the player
+const KO_NOISE = 1.5;   // m: a knockout is quiet but not silent (guess)
+
+function grabGuard() {
+  guard.grab();
+  game.touched = true;
+  player.grabbing = true;
+  player.crouched = false;
+  // Face the guard's back and pull him in front of you.
+  player.facing = guard.yaw;
+  game.cam.yaw = guard.yaw;
+  holdGuard();
+}
+
+function holdGuard() {
+  if (guard.state !== 'grabbed' && guard.state !== 'ko') return;
+  const fx = -Math.sin(player.facing);
+  const fz = -Math.cos(player.facing);
+  guard.pos.set(player.pos.x + fx * HOLD_DIST, 0, player.pos.z + fz * HOLD_DIST);
+  resolveCircle(guard.pos, 0.35, level.boxes);
+  // If a wall shoved him, shove the player back too so the pair stays together.
+  player.pos.set(guard.pos.x - fx * HOLD_DIST, 0, guard.pos.z - fz * HOLD_DIST);
+  resolveCircle(player.pos, player.radius, level.boxes);
+  guard.yaw = player.facing;
+  guard.applyMesh();
+  player.applyMesh();
+}
+
+function knockOutGuard() {
+  guard.knockOut();
+  player.grabbing = false;
+  player.locked = true;
+}
+
+function releaseGuard() {
+  player.grabbing = false;
+  player.locked = false;
 }
 
 /** One simulation step. */
@@ -115,15 +160,31 @@ function step(dt, inp) {
     const sampleLight = samples.map((p) => lightAt(p, level));
     player.lightLevel = (sampleLight[0] + sampleLight[1] + sampleLight[2]) / 3;
 
-    game.noise = { pos: player.pos.clone(), radius: player.noiseRadius };
+    holdGuard();
+    game.noise = { pos: player.pos.clone(), radius: player.locked ? KO_NOISE : player.noiseRadius };
     guard.update(dt, player, samples, sampleLight, level, game.noise);
+    if (player.locked && guard.state === 'down') player.locked = false; // knockout finished
     game.maxSuspicion = Math.max(game.maxSuspicion, guard.suspicion);
     game.time += dt;
 
-    game.interact = nearestInteractable();
-    if (game.interact && inp.pressed('KeyE')) {
-      game.interact.use();
-      if (game.interact.kind === 'objective') onComplete();
+    // One context button: takedown moves win over switches when a guard is in reach.
+    game.interact = null;
+    game.takedown = null;
+    if (guard.state === 'grabbed') {
+      game.takedown = 'knockout';
+      if (guard.grip <= 0) { guard.brokeFree = true; releaseGuard(); guard.breakFree(); }
+    } else if (!player.locked && guard.canTakedown(player)) {
+      game.takedown = 'grab';
+    } else if (!player.locked) {
+      game.interact = nearestInteractable();
+    }
+    if (inp.pressed('KeyE')) {
+      if (game.takedown === 'grab') grabGuard();
+      else if (game.takedown === 'knockout') knockOutGuard();
+      else if (game.interact) {
+        game.interact.use();
+        if (game.interact.kind === 'objective') onComplete();
+      }
     }
     if (guard.suspicion >= 100) onSpotted();
   }
@@ -162,11 +223,17 @@ function updateHud() {
     noise: game.noise.radius / MAX_NOISE,
     nv: nv.enabled,
     stance: player.stance,
-    prompt: game.state === 'playing' && game.interact ? game.interact.label() : '',
+    prompt: game.state !== 'playing' ? ''
+      : game.takedown === 'grab' ? 'E: grab'
+      : game.takedown === 'knockout' ? 'E: knock out · WASD drag him'
+      : player.locked ? ''
+      : game.interact ? game.interact.label() : '',
     guard: {
       pos: new THREE.Vector3(guard.pos.x, 2.15, guard.pos.z),
       suspicion: guard.suspicion,
       icon: guard.icon,
+      grip: guard.state === 'grabbed' ? guard.grip : null,
+      hidden: guard.state === 'ko' || guard.state === 'down',
     },
   });
 }
@@ -215,17 +282,27 @@ function frame(now) {
 
 // Scripted checks: run the simulation without the mouse. `drive` may set game state between steps.
 const nullInput = new NullInput();
+// Scripted key presses: game.debug.press('KeyE') fires on the next simulated step; hold(code) / release(code).
+const scriptHeld = new Set();
+let scriptPressed = new Set();
+nullInput.down = (c) => scriptHeld.has(c);
+nullInput.pressed = (c) => scriptPressed.has(c);
+nullInput.endFrame = () => { scriptPressed = new Set(); };
 game.debug = {
   simulate(seconds, drive) {
     const dt = 1 / 60;
     for (let i = 0; i < Math.round(seconds * 60); i++) {
       if (drive) drive(i * dt);
       step(dt, nullInput);
+      nullInput.endFrame();
     }
     updateCamera();
     updateHud();
   },
   reset,
+  press(c) { scriptPressed.add(c); },
+  hold(c) { scriptHeld.add(c); },
+  release(c) { scriptHeld.delete(c); },
 };
 
 resize();

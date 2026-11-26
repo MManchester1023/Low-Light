@@ -16,3 +16,13 @@
   switch and turns it back on, then looks around and stays warier.
 - ✔ v0.2: Guard pathfinding through doorways, so investigating and relighting work across rooms.
 - ✔ v0.2: Night vision (N): green amplified view for dark rooms; doesn't change what guards see.
+
+## Playtest round 2 notes
+
+- ✔ v0.3: Guards walk to noises: a footstep heard once a guard has some suspicion makes him turn and walk to
+  the sound, look around, then return to patrol warier. Hearing again while looking around sends him to the new spot.
+- ✔ v0.3: First hand-to-hand takedown, grab and knockout: within 1.4 m in an unaware guard's rear arc (more than
+  110° off his facing), press E to grab. Drag him slowly (1.1 m/s, 2.5 m noise) facing the camera; he breaks free
+  after 8 s and counts as spotted. Press E again to knock him out: 3 s struggle (1.5 m noise), then he slumps and
+  stays down. Takedown prompts take priority over switches. Capsule pose animation only, no animation assets.
+- ✔ v0.3: Rating, Shadow or Ghost: finishing with a guard touched gives Shadow; untouched gives Ghost.

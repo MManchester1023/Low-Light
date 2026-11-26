@@ -40,7 +40,7 @@ export class Hud {
 
   _guard(guard) {
     const tag = this.tag;
-    if (!guard || !guard.pos) { tag.style.display = 'none'; return; }
+    if (!guard || !guard.pos || guard.hidden) { tag.style.display = 'none'; return; }
     _v.copy(guard.pos).project(this.camera);
     if (_v.z > 1 || _v.x < -1 || _v.x > 1 || _v.y < -1 || _v.y > 1) { tag.style.display = 'none'; return; }
     const x = (_v.x * 0.5 + 0.5) * window.innerWidth;
@@ -52,9 +52,21 @@ export class Hud {
     const icon = guard.icon || '';
     if (this.tagIcon.textContent !== icon) this.tagIcon.textContent = icon;
     this.tagIcon.style.color = icon === '!' ? '#e8412f' : '#f0d040';
-    if (s < 0.5) {
+    if (Number.isFinite(guard.grip)) {
+      // grip mode: bar always shown, width = grip, red (about to break free) -> pale blue-white (plenty of time)
+      const gr = Math.max(0, Math.min(1, guard.grip));
+      tag.classList.add('grip');
+      this.tagBar.style.visibility = 'visible';
+      this.tagFill.style.width = (gr * 100).toFixed(1) + '%';
+      const r = Math.round(232 + (220 - 232) * gr);
+      const g = Math.round(65 + (235 - 65) * gr);
+      const b = Math.round(47 + (255 - 47) * gr);
+      this.tagFill.style.background = `rgb(${r},${g},${b})`;
+    } else if (s < 0.5) {
+      tag.classList.remove('grip');
       this.tagBar.style.visibility = 'hidden';
     } else {
+      tag.classList.remove('grip');
       this.tagBar.style.visibility = 'visible';
       const t = Math.max(0, Math.min(1, s / 100));
       this.tagFill.style.width = (t * 100).toFixed(1) + '%';
