@@ -29,6 +29,11 @@ tracking files.
   detection, suspicion rates, noise radii) from automated tests. Make the change asked for and let Mat
   playtest it. Automated checks are still fine as a quick "nothing broke" check.
 - When asked for "the next thing", pick the most important thing overall from `status.md`, not every open note.
+- **Regression tests**: `src/tests.js`, run by opening `http://localhost:8080/?test` (results on the start
+  screen and in `window.testResults`). Every new feature or fix gets a test there. Run the whole suite after every
+  change and fix any failure before finishing. Tests check that features work, never tuning numbers.
+- **Leave the browser pane clean**: after testing, load `http://localhost:8080/` again (without `?test`) and
+  confirm the game is at its normal start with no console errors. Mat plays in the same pane.
 - After each piece of work:
   1. Mark the item ✔ with the version in `status.md`, then move it to `completed.md`.
   2. Add a version row to `changelog.md`.

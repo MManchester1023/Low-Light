@@ -383,3 +383,18 @@ game.debug = {
 resize();
 reset();
 requestAnimationFrame(frame);
+
+// Regression tests: open with ?test (see src/tests.js).
+if (new URLSearchParams(location.search).has('test')) {
+  import('./tests.js').then(({ runTests }) => {
+    const results = runTests(game);
+    window.testResults = results;
+    const failed = results.filter((r) => !r.ok);
+    hud.showOverlay(
+      failed.length ? 'Tests failed' : 'Tests passed',
+      `${results.length - failed.length} / ${results.length} passed`,
+      failed.map((r) => `✘ ${r.name}: ${r.detail}`).join('\n')
+    );
+    console.log('[tests]', JSON.stringify(results));
+  });
+}
