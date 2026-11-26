@@ -1,0 +1,1 @@
+walk and run speed should be adjustable with scroll up speeding the player up and scroll down slowing the player down

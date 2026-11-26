@@ -60,3 +60,10 @@
   close), makes a guard suspicious and sends him to look; he shuts the door.
 
 - ✔ v0.9.1: Camera follows the mouse without clicking or dragging (Mat's request); edge turning when pointer lock is refused.
+
+## v0.10
+
+- ✔ v0.10 (status #1): Search behaviour: after a close call (suspicion peaked at 55+), finding a body, or a
+  full alert ending, a guard walks up to 3 spots around where it happened, looks around at each, then
+  patrols warier.
+- ✔ v0.10: Wrist unit HUD (Mat's request, an in-world field computer in place of the bars).

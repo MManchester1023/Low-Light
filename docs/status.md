@@ -6,10 +6,9 @@ Roadmap and priorities. Finished items move to `completed.md` with a ✔ and the
 
 The prototype asks one question: is sneaking up on a single guard tense and satisfying?
 
-1. Search behavior: a guard at high suspicion searches the area, then returns to patrol warier.
 2. Body hiding: carry a knocked-out guard and leave him in a hiding spot (dark corner, behind cover, a
-   cupboard). Part of the prototype baseline (Mat, 2026-11-26). A found body already makes a guard suspicious
-   and sends him to it (v0.9).
+   cupboard). Part of the prototype baseline (Mat, 2026-11-26). A found body already makes a guard suspicious,
+   sends him to it and makes him search (v0.9, v0.10).
 3. Hand it to someone else and watch them play. Pass test: the tester waits, plans an approach and reacts
    out loud to a near miss. If not, fix detection before adding content.
 

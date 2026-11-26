@@ -14,23 +14,47 @@
 
   <div id="hud">
         <div id="crosshair"></div>
-    <div id="objective">Objective: take the files from the desk in the east room</div>
     <div id="hurt"></div>
     <div id="alert"></div>
     <div id="guardTag"><div class="icon"></div><div class="bar"><div class="fill"></div></div></div>
-    <div id="bottom">
-      <div id="prompt"></div>
-      <div id="meter">
-        <div class="label">LIGHT</div>
-        <div class="track"><div class="fill"></div></div>
-        <div class="noise-row">
-          <div class="label">NOISE</div>
-          <div class="noise-track"><div class="noise-fill"></div></div>
+    <div id="bottom"><div id="prompt"></div></div>
+
+    <!-- Wrist unit: the player's field computer, strapped to the left forearm. Replaces the old bars. -->
+    <div id="wrist">
+      <div class="strap"></div>
+      <div class="bezel">
+        <div class="brand"><span>KESTREL</span><span class="model">FC-3</span><span class="led" id="wristLed"></span></div>
+        <div class="screen">
+          <div class="obj" id="objective">OBJ ▸ take the files from the desk in the east room</div>
+          <div class="row">
+            <span class="k">VIS</span>
+            <div class="cells" id="visCells"></div>
+            <span class="v" id="visWord">DARK</span>
+          </div>
+          <div class="row">
+            <span class="k">SND</span>
+            <canvas id="scope" width="176" height="24"></canvas>
+            <span class="v" id="sndWord">0.0m</span>
+          </div>
+          <div class="row">
+            <span class="k">VIT</span>
+            <div class="cells hp" id="hpCells"></div>
+            <span class="v" id="health">100</span>
+          </div>
+          <div class="sep"></div>
+          <div class="row foot">
+            <div class="kit">
+              <div><span class="k">PST</span> <span class="pips" id="ammoPips"></span> <span id="ammoText"></span></div>
+              <div id="held"></div>
+            </div>
+            <div class="side">
+              <div id="status" class="status">QUIET</div>
+              <div class="stance" id="stance"></div>
+              <div id="nv">NV ON</div>
+            </div>
+          </div>
+          <div class="glare"></div>
         </div>
-        <div class="stance"></div>
-        <div id="nv">NV</div>
-        <div id="held"></div>
-        <div id="health"></div>
       </div>
     </div>
   </div>

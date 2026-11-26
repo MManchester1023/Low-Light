@@ -1,6 +1,8 @@
 // Patrolling guard with a view cone, hearing and a 0–100 suspicion meter.
 // States: patrol → suspicious (stops, turns to the stimulus) → investigate (walks to it)
 //         → look (scans around) → back to patrol, warier.
+//         search: after a close call (suspicion got high, or he found a body) he doesn't just look around,
+//                 he walks a few spots around where it happened, looking at each, then patrols warier.
 //         relight: a guard who sees a dead light walks to its switch and turns it back on.
 //         check: on patrol, detours to a remembered spot (noise heard, player seen, dead light found),
 //                looks around, then carries on with the route.
@@ -49,6 +51,10 @@ const INVESTIGATE_WALK = 1.3;
 const DOOR_SUSPICION = 20;      // added when he spots a door the player left open (guess)
 const BODY_SUSPICION = 45;      // added when he finds a guard lying on the floor (guess)
 const BODY_SEEN_LIGHT = 0.15;   // a body in darker light than this is only seen up close (guess)
+const SEARCH_AT = 55;           // peak suspicion that turns "look around" into a search (guess)
+const SEARCH_AREA = 8;          // m: search spots are nav nodes this close to where it happened (guess)
+const SEARCH_SPOTS = 3;         // spots he walks to (guess)
+const SEARCH_LOOK = 2.5;        // s looking around at each (guess)
 // Full alert (all guesses):
 const HUNT_RUN = 3.0;           // m/s while hunting
 const HUNT_LOOK = 3;            // s spent looking around at each search spot
@@ -164,6 +170,12 @@ export class Guard {
     this.huntVersion = -1;
     this.huntLookAt = null;
     this.huntGoalTime = 0;
+    this.peak = 0;              // highest suspicion since he was last on patrol
+    this.mustSearch = false;    // found a body: always search afterwards
+    this.searchSpots = [];
+    this.searchCentre = new THREE.Vector3();
+    this.searchLookAt = null;
+    this.searchGoalTime = 0;
     this.relight = null;        // { group, sw, flipAt }
     this.path = null;
     this.pathTarget = null;
@@ -301,6 +313,7 @@ export class Guard {
   setState(s) {
     if (s === 'investigate') this.remember(this.stimulus, this.stimulusKind === 'sight' ? 'sight' : 'sound');
     else if (s === 'suspicious' && this.stimulusKind === 'sight') this.remember(this.stimulus, 'sight');
+    if (s === 'patrol') { this.peak = 0; this.mustSearch = false; }
     this.state = s;
     this.checkLookFrom = undefined;
     this.stateTime = 0;
@@ -438,6 +451,7 @@ export class Guard {
       this.knownBodies.add(g);
       this.remember(g.pos, 'sight');
       this.noticeEvidence(g.pos, BODY_SUSPICION);
+      this.mustSearch = true;
     }
   }
 
@@ -522,6 +536,7 @@ export class Guard {
 
     // --- Behaviour ---
     this.stateTime += dt;
+    this.peak = Math.max(this.peak, this.suspicion);
     if (this.suspicion >= 100 && this.state !== 'hunt') { this.joinHunt(); this.raiseAlert(player.pos); }
 
     switch (this.state) {
@@ -596,9 +611,28 @@ export class Guard {
         }
         if (this.stateTime > 4 && this.suspicion < SUSPICIOUS_AT) {
           this.wary = true;
-          this.setState('patrol');
+          if (this.peak >= SEARCH_AT || this.mustSearch) this.startSearch(level);
+          else this.setState('patrol');
         }
         break;
+
+      case 'search': {
+        if (this.suspicion >= SUSPICIOUS_AT || (this.hearing && this.suspicion >= HEAR_REACT_AT)) { this.setState('suspicious'); break; }
+        const spot = this.searchSpots[0];
+        if (!spot) { this.wary = true; this.setState('patrol'); break; }
+        if (this.searchLookAt === null) {
+          const there = this.moveTo(spot, INVESTIGATE_WALK, dt, boxes, level, 0.6);
+          if (there || this.stateTime - this.searchGoalTime > 12) this.searchLookAt = this.stateTime;
+        } else {
+          this.yaw = wrapAngle(this.yaw + Math.sin((this.stateTime - this.searchLookAt) * 1.6) * 1.5 * dt);
+          if (this.stateTime - this.searchLookAt > SEARCH_LOOK) {
+            this.searchSpots.shift();
+            this.searchLookAt = null;
+            this.searchGoalTime = this.stateTime;
+          }
+        }
+        break;
+      }
 
       case 'hunt':
         this.suspicion = 100;
@@ -607,6 +641,31 @@ export class Guard {
     }
     this.handleDoors(level);
     this.applyMesh();
+  }
+
+  /** Pick up to SEARCH_SPOTS nav nodes around where it happened, nearest first, and start walking them. */
+  startSearch(level) {
+    const c = this.searchCentre.copy(this.stimulus);
+    const pool = level.navNodes
+      .filter((n) => Math.hypot(n.x - c.x, n.z - c.z) <= SEARCH_AREA)
+      .sort((a, b) => Math.hypot(a.x - c.x, a.z - c.z) - Math.hypot(b.x - c.x, b.z - c.z))
+      .slice(0, SEARCH_SPOTS + 1)
+      .filter((n) => Math.hypot(n.x - this.pos.x, n.z - this.pos.z) > 1.2); // not the spot he's standing on
+    // Walk them in a chain: always the nearest one left.
+    const order = [];
+    let from = this.pos;
+    while (pool.length && order.length < SEARCH_SPOTS) {
+      let bi = 0;
+      for (let i = 1; i < pool.length; i++) {
+        if (Math.hypot(pool[i].x - from.x, pool[i].z - from.z) < Math.hypot(pool[bi].x - from.x, pool[bi].z - from.z)) bi = i;
+      }
+      from = pool.splice(bi, 1)[0];
+      order.push(from.clone());
+    }
+    this.setState('search');
+    this.searchSpots = order;
+    this.searchLookAt = null;
+    this.searchGoalTime = 0;
   }
 
   /** Full alert: shoot the player on sight, otherwise run to where he was last known to be and search around it. */

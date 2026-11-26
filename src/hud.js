@@ -1,14 +1,43 @@
 import * as THREE from 'three';
 
 const _v = new THREE.Vector3();
+const VIS_CELLS = 12;
+const HP_CELLS = 10;
 
+/** Row of segment cells inside the wrist unit. */
+function makeCells(el, n) {
+  el.textContent = '';
+  const cells = [];
+  for (let i = 0; i < n; i++) { const c = document.createElement('i'); el.append(c); cells.push(c); }
+  return cells;
+}
+
+/** What the light reading means, in a word. */
+function visWord(l) {
+  if (l < 0.12) return 'DARK';
+  if (l < 0.35) return 'DIM';
+  if (l < 0.65) return 'LIT';
+  return 'EXPOSED';
+}
+
+// HUD: the wrist unit (light, sound, vitals, kit, status), the context prompt, guard tags, alert banner.
 export class Hud {
   constructor(camera) {
     this.camera = camera;
-    this.meterFill = document.querySelector('#meter .fill');
-    this.stanceEl = document.querySelector('#meter .stance');
-    this.noiseFill = document.querySelector('#meter .noise-fill');
-    this.nvEl = document.getElementById('nv');
+    this.wristEl = document.getElementById('wrist');
+    this.ledEl = document.getElementById('wristLed');
+    this.visCells = makeCells(document.getElementById('visCells'), VIS_CELLS);
+    this.hpCellsEl = document.getElementById('hpCells');
+    this.hpCells = makeCells(this.hpCellsEl, HP_CELLS);
+    this.visWordEl = document.getElementById('visWord');
+    this.sndWordEl = document.getElementById('sndWord');
+    this.scope = document.getElementById('scope');
+    this.scopeCtx = this.scope.getContext('2d');
+    this.scopePhase = 0;
+    this.statusEl = document.getElementById('status');
+    this.stanceEl = document.getElementById('stance');
+    this.ammoPips = document.getElementById('ammoPips');
+    this.ammoText = document.getElementById('ammoText');
     this.heldEl = document.getElementById('held');
     this.promptEl = document.getElementById('prompt');
     this.tagTemplate = document.getElementById('guardTag'); // one tag per guard, cloned from this
@@ -20,29 +49,61 @@ export class Hud {
     this.overlayH1 = this.overlay.querySelector('h1');
     this.overlayMsg = this.overlay.querySelector('.msg');
     this.overlaySmall = this.overlay.querySelector('.small');
+    this.lastHealth = 1;
   }
 
-  update({ light = 0, stance = '', prompt = '', guards = [], noise = 0, nv = false, held = '',
-    health = 1, alert = '', hurt = 0 } = {}) {
-    const hp = `HEALTH ${Math.round(Math.max(0, health) * 100)}`;
-    if (this.healthEl.textContent !== hp) this.healthEl.textContent = hp;
-    this.healthEl.classList.toggle('low', health < 0.5);
+  /**
+   * light, noise: 0..1 · noiseM: noise radius in m · health: 0..1 · status: 'QUIET' | 'CAUTION' | 'ALERT'
+   * ammo: { mag, size, reserve, text } · held: extra kit lines · stance, prompt, alert: text · hurt: 0..1 flash
+   */
+  update({ light = 0, stance = '', prompt = '', guards = [], noise = 0, noiseM = 0, nv = false, held = '',
+    health = 1, alert = '', hurt = 0, status = 'QUIET', ammo = null, dt = 1 / 60 } = {}) {
+    const setText = (el, t) => { if (el.textContent !== t) el.textContent = t; };
+
+    // Light: segment cells, the top few turn amber.
+    const l = Math.max(0, Math.min(1, light));
+    const lit = Math.round(l * VIS_CELLS);
+    this.visCells.forEach((c, i) => {
+      c.classList.toggle('on', i < lit);
+      c.classList.toggle('hot', i >= VIS_CELLS * 0.66);
+    });
+    setText(this.visWordEl, visWord(l));
+
+    // Sound: a little oscilloscope whose swing follows the noise radius.
+    const nz = Math.max(0, Math.min(1, noise));
+    this.drawScope(nz, dt);
+    setText(this.sndWordEl, noiseM > 0.05 ? `${noiseM.toFixed(1)}m` : 'SILENT');
+
+    // Vitals.
+    const h = Math.max(0, Math.min(1, health));
+    const hpOn = Math.ceil(h * HP_CELLS - 1e-6);
+    this.hpCells.forEach((c, i) => c.classList.toggle('on', i < hpOn));
+    this.hpCellsEl.classList.toggle('low', h < 0.5);
+    setText(this.healthEl, String(Math.round(h * 100)));
+    if (h < this.lastHealth) {
+      this.wristEl.classList.remove('hit');
+      void this.wristEl.offsetWidth; // restart the glitch animation
+      this.wristEl.classList.add('hit');
+    }
+    this.lastHealth = h;
+
+    // Kit.
+    if (ammo) {
+      setText(this.ammoPips, '▮'.repeat(ammo.mag) + '▯'.repeat(Math.max(0, ammo.size - ammo.mag)));
+      setText(this.ammoText, `+${ammo.reserve}${ammo.text ? ' ' + ammo.text : ''}`);
+    }
+    setText(this.heldEl, held);
+
+    // Status.
+    setText(this.statusEl, status);
+    const cls = status === 'ALERT' ? 'alert' : status === 'CAUTION' ? 'caution' : '';
+    this.statusEl.className = 'status ' + cls;
+    this.ledEl.className = 'led ' + cls;
+    setText(this.stanceEl, stance);
+    this.wristEl.classList.toggle('nv', nv);
+
     if (this.alertEl.textContent !== alert) this.alertEl.textContent = alert;
     this.hurtEl.style.opacity = Math.max(0, Math.min(1, hurt)).toFixed(2);
-    if (this.heldEl.textContent !== held) this.heldEl.textContent = held;
-    const nz = Math.max(0, Math.min(1, noise));
-    this.noiseFill.style.width = (nz * 100).toFixed(1) + '%';
-    // muted grey-blue -> orange-red
-    this.noiseFill.style.background =
-      `rgb(${Math.round(95 + 150 * nz)},${Math.round(106 - 20 * nz)},${Math.round(125 - 85 * nz)})`;
-    const nvShow = nv ? 'block' : 'none';
-    if (this.nvEl.style.display !== nvShow) this.nvEl.style.display = nvShow;
-    const l = Math.max(0, Math.min(1, light));
-    this.meterFill.style.width = (l * 100).toFixed(1) + '%';
-    // dim grey-green -> bright warm white
-    const r = Math.round(80 + 175 * l), g = Math.round(96 + 153 * l), b = Math.round(86 + 124 * l);
-    this.meterFill.style.background = `rgb(${r},${g},${b})`;
-    if (this.stanceEl.textContent !== stance) this.stanceEl.textContent = stance;
     if (this.promptEl.textContent !== prompt) this.promptEl.textContent = prompt;
     while (this.tags.length < guards.length) {
       const el = this.tags.length ? this.tagTemplate.cloneNode(true) : this.tagTemplate;
@@ -88,6 +149,36 @@ export class Hud {
       el.fill.style.width = (t * 100).toFixed(1) + '%';
       el.fill.style.background = `rgb(${Math.round(240 - 10 * t)},${Math.round(208 - 150 * t)},${Math.round(64 - 20 * t)})`;
     }
+  }
+
+  /** Oscilloscope trace for the sound reading: flat and faint when quiet, a jagged swing when loud. */
+  drawScope(level, dt) {
+    const ctx = this.scopeCtx;
+    const w = this.scope.width;
+    const hgt = this.scope.height;
+    this.scopePhase += dt * (4 + level * 14);
+    ctx.clearRect(0, 0, w, hgt);
+    ctx.strokeStyle = 'rgba(141,255,171,0.15)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, hgt / 2 + 0.5);
+    ctx.lineTo(w, hgt / 2 + 0.5);
+    ctx.stroke();
+    ctx.strokeStyle = level > 0.6 ? '#ffb347' : '#8dffab';
+    ctx.shadowColor = ctx.strokeStyle;
+    ctx.shadowBlur = 4;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    const amp = (hgt / 2 - 2) * Math.max(0.04, level);
+    const p = this.scopePhase;
+    for (let x = 0; x <= w; x += 2) {
+      const t = x / w;
+      const y = Math.sin(t * 19 + p) * 0.6 + Math.sin(t * 43 - p * 1.7) * 0.3 + Math.sin(t * 97 + p * 2.3) * 0.15 * level;
+      const px = hgt / 2 + y * amp;
+      if (x === 0) ctx.moveTo(x, px); else ctx.lineTo(x, px);
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
   }
 
   showOverlay(title, msg, small = '') {

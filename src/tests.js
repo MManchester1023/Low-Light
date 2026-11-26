@@ -25,6 +25,7 @@ export function runTests(game) {
     for (const g of guards.slice(1)) g.setActive(false);
   }
   const both = () => { for (const g of guards) g.setActive(true); };
+  const nvToggle = () => { d.press('KeyN'); d.simulate(1 / 60, hide); };
   const yawTo = (from, to) => Math.atan2(-(to.x - from.x), -(to.z - from.z));
 
   function check(cond, msg) {
@@ -110,15 +111,49 @@ export function runTests(game) {
     check(!player.crouched, 'C did not stand back up');
   });
 
-  test('Bottom HUD: prompt sits above the meter', () => {
+  test('Bottom HUD: prompt and wrist unit are on screen and do not overlap', () => {
     place(2.7, 3.5); // by switch B
     d.simulate(0.05);
     const p = document.getElementById('prompt');
     check(p.textContent.length > 0, 'no prompt by the switch');
+    check(!document.getElementById('meter'), 'old bar meter still there');
     const a = p.getBoundingClientRect();
-    const b = document.getElementById('meter').getBoundingClientRect();
-    check(a.bottom <= b.top, `prompt overlaps the meter by ${(a.bottom - b.top).toFixed(0)} px`);
-    check(b.bottom <= window.innerHeight, 'meter runs off the bottom of the screen');
+    const b = document.getElementById('wrist').getBoundingClientRect();
+    const overlap = a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    check(!overlap, 'prompt overlaps the wrist unit');
+    check(b.left >= 0 && b.bottom <= window.innerHeight && b.width > 100, 'wrist unit runs off the screen');
+  });
+
+  test('Wrist unit shows light, sound, health, ammo and status', () => {
+    const cellsOn = (id) => document.querySelectorAll(`#${id} i.on`).length;
+    hide();
+    d.simulate(0.1, hide);
+    check(document.getElementById('visWord').textContent === 'DARK' && cellsOn('visCells') === 0, 'light reading not dark out of the level');
+    place(6, -1); // under light B1
+    d.simulate(0.1, () => place(6, -1));
+    check(cellsOn('visCells') > 0 && document.getElementById('visWord').textContent !== 'DARK', 'light reading did not rise under a light');
+    check(document.getElementById('sndWord').textContent === 'SILENT', 'standing still is not silent');
+    hide();
+    game.cam.yaw = 0;
+    d.hold('ShiftLeft');
+    d.hold('KeyW');
+    d.simulate(0.3, () => { player.pos.z = HIDE.z; });
+    d.release('KeyW');
+    d.release('ShiftLeft');
+    check(document.getElementById('sndWord').textContent.endsWith('m'), 'running shows no sound reading');
+    check(cellsOn('hpCells') === 10 && document.getElementById('health').textContent === '100', 'health not full');
+    game.health = 0.34;
+    d.simulate(1 / 60, hide);
+    check(cellsOn('hpCells') < 10 && document.querySelector('#hpCells').classList.contains('low'), 'health cells did not drop');
+    check(document.getElementById('ammoPips').textContent.length === game.mag, 'ammo pips do not match the magazine');
+    check(document.getElementById('status').textContent === 'QUIET', 'status not QUIET with nobody suspicious');
+    guard.joinHunt();
+    guard.raiseAlert({ x: 0, z: 0 });
+    d.simulate(1 / 60, hide);
+    check(document.getElementById('status').textContent === 'ALERT', 'status not ALERT in a full alert');
+    nvToggle();
+    check(document.getElementById('wrist').classList.contains('nv'), 'NV not shown on the wrist unit');
+    nvToggle();
   });
 
   test('Light switch turns its lights off and on', () => {
@@ -225,6 +260,48 @@ export function runTests(game) {
     throwFrom(-10, 7, Math.PI / 2, 0); // into the west wall by the start
     check(game.impact, 'bottle never landed');
     check(!game.impactHeard && guard.state === 'patrol', 'guard heard a far-off smash');
+  });
+
+  // ---------- Search ----------
+  test('Search: after a close call he walks several spots around it, then patrols warier', () => {
+    hide();
+    guard.stimulus.set(6, 0, 3);
+    guard.stimulusKind = 'sight';
+    guard.suspicion = 70; // a close call (set directly: this test is about what he does next)
+    guard.setState('investigate');
+    const spots = [];
+    let searched = false;
+    d.simulate(60, () => {
+      hide();
+      if (guard.state === 'search') {
+        searched = true;
+        if (guard.searchLookAt !== null && !spots.some((s) => near(s, guard.pos, 1))) spots.push(guard.pos.clone());
+      }
+    });
+    check(searched, `never searched (state ${guard.state})`);
+    check(spots.length >= 2, `only looked around at ${spots.length} spot(s)`);
+    check(spots.every((s) => near(s, { x: 6, z: 3 }, 9)), 'searched somewhere far from the close call');
+    check(guard.state === 'patrol' && guard.wary, `ended ${guard.state}, wary ${guard.wary}`);
+  });
+
+  test('Search: a guard who finds a body searches afterwards', () => {
+    both();
+    d.simulate(1 / 60, hide);
+    hide();
+    guard2.pos.set(guard.pos.x - Math.sin(guard.yaw) * 2, 0, guard.pos.z - Math.cos(guard.yaw) * 2);
+    guard2.dropKnockOut();
+    let searched = false;
+    d.simulate(30, () => { hide(); if (guard.state === 'search') searched = true; });
+    check(searched, `no search after finding the body (state ${guard.state})`);
+  });
+
+  test('Search: the guards search after a full alert ends', () => {
+    hide();
+    guard.joinHunt();
+    guard.raiseAlert({ x: 6, z: 3 });
+    let searched = false;
+    d.simulate(110, () => { hide(); if (!squad.hunt.active && guard.state === 'search') searched = true; });
+    check(searched, `no search after the alert (state ${guard.state})`);
   });
 
   // ---------- Second guard ----------

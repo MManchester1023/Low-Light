@@ -449,11 +449,16 @@ function updateHud() {
   hud.update({
     light: player.lightLevel,
     noise: game.noise.radius / MAX_NOISE,
+    noiseM: game.noise.radius,
     nv: nv.enabled,
-    held: [
-      `PISTOL ${game.mag}/${game.reserve}${game.reloading > 0 ? ' · RELOADING' : game.pistolDrawn ? ' · DRAWN' : ` · ${K('pistol')}`}`,
-      game.holding ? (game.aiming ? 'BOTTLE · AIMING' : `BOTTLE · ${K('throw')}`) : '',
-    ].filter(Boolean).join('\n'),
+    ammo: {
+      mag: game.mag, size: MAG_SIZE, reserve: game.reserve,
+      text: game.reloading > 0 ? 'RELOAD' : game.pistolDrawn ? 'DRAWN' : `[${K('pistol')}]`,
+    },
+    held: game.holding ? (game.aiming ? 'BTL  AIMING' : `BTL  [${K('throw')}] throw`) : '',
+    status: squad.hunt.active ? 'ALERT'
+      : guards.some((g) => g.active && !g.disabled && g.icon === '?') ? 'CAUTION' : 'QUIET',
+    dt: frameDt,
     stance: player.stance + (game.onGlass ? ' · ON GLASS' : ''),
     prompt: game.state !== 'playing' ? ''
       : game.pistolAim ? (game.reloading > 0 ? 'Reloading…'
@@ -568,8 +573,10 @@ input.onActiveChange = (active) => {
 };
 
 let last = performance.now();
+let frameDt = 1 / 60; // for HUD animation (the wrist unit sound trace)
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
+  frameDt = dt;
   last = now;
   if (input.active || game.state !== 'playing') step(dt, input);
   input.endFrame();
