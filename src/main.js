@@ -37,6 +37,7 @@ for (const pipe of level.pipes) {
 // While hanging at a pipe end, E climbs back down.
 const pipeDown = { kind: 'pipeDown', label: () => 'E: climb down', use: () => player.climbDown() };
 const DROP_NOISE = 6; // m: letting go of a pipe lands hard (design doc: loud landing; radius is a guess)
+const DROP_KO_RANGE = 0.9; // m: land this close to a guard and he goes down (design doc: drop attack; guess)
 const guard = new Guard(scene, level.guardRoute);
 const hud = new Hud(camera);
 const input = new Input(canvas);
@@ -109,6 +110,7 @@ function reset() {
   game.aiming = false;   // G held with something to throw
   game.impact = null;    // { pos, radius, t } last smash or hard landing, for the V debug ring
   game.dropHeard = false;
+  game.dropKO = false;    // last drop landed on the guard
   bottle.reset();
   nv.enabled = false;
   if (input.active) hud.hideOverlay();
@@ -225,6 +227,9 @@ function step(dt, inp) {
     player.update(dt, inp, game.cam.yaw, level.boxes);
     if (player.landed) {
       game.impact = { pos: player.pos.clone(), radius: DROP_NOISE, t: game.time };
+      const onGuard = !guard.disabled && guard.state !== 'alert'
+        && Math.hypot(guard.pos.x - player.pos.x, guard.pos.z - player.pos.z) <= DROP_KO_RANGE;
+      if (onGuard) { guard.dropKnockOut(); game.touched = true; game.dropKO = true; }
       game.dropHeard = guard.hearImpact(player.pos, DROP_NOISE, level.boxes);
     }
 
@@ -304,7 +309,8 @@ function updateHud() {
       : game.takedown === 'grab' ? 'E: grab'
       : game.takedown === 'knockout' ? 'E: knock out · WASD drag him'
       : player.locked ? ''
-      : player.hanging ? (game.interact ? 'E: climb down · C: drop' : 'C: drop · WASD shimmy')
+      : player.hanging ? `${game.interact ? 'E: onto the riser · ' : ''}C: drop · Space: ${player.tucked ? 'hang by hands' : 'legs up'}`
+      : player.climb && player.climb.mode === 'riser' ? 'W climb · S down · C drop'
       : player.climb ? ''
       : game.interact ? game.interact.label() : '',
     guard: {

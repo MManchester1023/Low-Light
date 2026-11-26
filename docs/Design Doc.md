@@ -31,7 +31,7 @@ Tension comes from guards noticing you gradually, so there is always a moment to
 | --- | --- | --- |
 | Sight | View cone plus line of sight; fills faster when closer and brighter | 120° cone, 12 m range |
 | Light | Sampled at head, chest and feet; shown on a player light meter | Full dark nearly invisible beyond 2 m |
-| Noise | Footsteps and impacts emit a radius based on speed and surface | Crouch 1 m, walk 4 m, run 10 m |
+| Noise | Footsteps and impacts emit a radius based on speed and surface | Crouch 1 m, walk 3 m, run 10 m |
 | Evidence | Bodies, dead lights and open doors raise suspicion | A found body triggers a search, there will be places to hide bodies |
 | Decay | Meter drains after the guard loses the stimulus | 10 points per second |
 

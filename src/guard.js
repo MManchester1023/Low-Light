@@ -136,6 +136,8 @@ export class Guard {
   grab() { this.setState('grabbed'); this.grabTime = 0; this.suspicion = 0; }
   get grip() { return Math.max(0, 1 - this.grabTime / GRAB_MAX); }
   knockOut() { this.setState('ko'); this.koTime = 0; }
+  /** Landed on from above (dropped from a pipe): straight down, no struggle. */
+  dropKnockOut() { this.suspicion = 0; this.setState('down'); this.koTime = 0; }
   breakFree() { this.rig.rotation.x = 0; this.suspicion = 100; this.setState('alert'); }
 
   toggleCone() {

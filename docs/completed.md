@@ -37,3 +37,6 @@
 - ✔ v0.6: Ceiling pipe: climb a riser (E), hang legs-up under the ceiling and shimmy along it (WASD), climb
   down at either end (E) or drop anywhere (C, loud landing the guard can hear). Guards don't look more than 30°
   above eye level, so a player on the pipe close above or ahead of a guard isn't seen.
+- ✔ v0.6.1: Pipe climbing is manual (E grabs the riser, W/S climb up and down, C lets go). While hanging, Space
+  switches between legs-up and hanging by the hands. Dropping onto a guard knocks him out (drop attack from the
+  design doc). Walking and shimmying are quieter.

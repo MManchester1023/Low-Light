@@ -1,5 +1,5 @@
 // Third-person player: capsule body, walk / run / crouch, collision against level boxes,
-// and climbing pipes: up a riser, hang and shimmy along the ceiling, climb down or drop.
+// and climbing pipes: hold W/S on a riser, hang (legs up or by the hands) and shimmy along the ceiling, drop.
 
 import * as THREE from 'three';
 import { resolveCircle } from './collision.js';
@@ -7,14 +7,14 @@ import { lerp, turnToward } from './utils.js';
 import { PIPE_Y, END_PAD } from './pipe.js';
 
 const SPEED = { crouch: 1.5, crouchRun: 2.4, walk: 3.0, run: 5.5, drag: 1.1 }; // m/s, guesses
-const NOISE = { crouch: 1, walk: 4, run: 10, drag: 2.5 }; // m, design doc values
+const NOISE = { crouch: 1, walk: 3, run: 10, drag: 2.5 }; // m, design doc values (walk was 4)
 export const MAX_NOISE = NOISE.run;
 const BODY_H = 1.74;
 
-// Pipes (all guesses): climb a riser, hang under the pipe with legs up, shimmy, climb down or drop.
+// Pipes (all guesses): climb a riser by hand (W/S), hang legs-up or by the hands, shimmy, drop.
 const CLIMB_SPEED = 1.6;           // m/s up or down a riser
-const SHIMMY_SPEED = 1.2;          // m/s along the pipe
-const CLIMB_NOISE = 1;             // m: as quiet as crouching
+const SHIMMY_SPEED = { legs: 1.2, hands: 1.6 }; // m/s: by the hands is quicker but hangs lower, easier to see
+const CLIMB_NOISE = 0.6;           // m: quieter than crouching
 const CLIMB_TOP = PIPE_Y - BODY_H; // feet height when the hands reach the pipe
 const HANG_Y = PIPE_Y - 0.4;       // body centreline while hanging
 const GRAVITY = 9.8;
@@ -51,7 +51,7 @@ export class Player {
     this.running = false;
     this.grabbing = false; // holding a guard: slow, faces where the camera looks
     this.locked = false;   // mid-knockout: can't move
-    this.climb = null;     // on a pipe: { pipe, s, mode: 'up' | 'hang' | 'down' | 'drop' }
+    this.climb = null;     // on a pipe: { pipe, s, mode: 'riser' | 'hang' | 'drop', style: 'legs' | 'hands' }
     this.climbSpeed = 0;
     this.vy = 0;
     this.landed = false;   // true for the step a drop hits the floor
@@ -63,7 +63,11 @@ export class Player {
   }
 
   get stance() {
-    if (this.climb) return { hang: 'HANGING', drop: 'DROPPING' }[this.climb.mode] || 'CLIMBING';
+    if (this.climb) {
+      const c = this.climb;
+      if (c.mode === 'hang') return c.style === 'hands' ? 'HANGING · HANDS' : 'HANGING · LEGS UP';
+      return c.mode === 'drop' ? 'DROPPING' : 'CLIMBING';
+    }
     if (this.crouched) return 'CROUCHED';
     return this.running && this.speed > 3.2 ? 'RUNNING' : 'STANDING';
   }
@@ -72,16 +76,21 @@ export class Player {
     return !!this.climb && this.climb.mode === 'hang';
   }
 
+  /** Hanging legs-up: body tucked along the pipe. */
+  get tucked() {
+    return this.hanging && this.climb.style === 'legs';
+  }
+
   /** Hanging at either end of the pipe, where a riser goes down. */
   get atPipeEnd() {
     const c = this.climb;
     return this.hanging && (c.s <= END_PAD + 0.05 || c.s >= c.pipe.length - END_PAD - 0.05);
   }
 
-  /** Start climbing a pipe's riser from the floor, at distance s along the pipe. */
+  /** Grab a pipe's riser from the floor, at distance s along the pipe. W climbs, S climbs down. */
   startClimb(pipe, s) {
     const p = pipe.pointAt(s);
-    this.climb = { pipe, s, mode: 'up' };
+    this.climb = { pipe, s, mode: 'riser', style: 'legs' };
     this.pos.set(p.x, 0, p.z);
     this.vel.set(0, 0, 0);
     this.crouched = false;
@@ -92,18 +101,19 @@ export class Player {
     this.applyMesh();
   }
 
-  /** Hanging at a pipe end: climb back down the riser. */
+  /** Hanging at a pipe end: swing back onto the riser (then S climbs down). */
   climbDown() {
     if (!this.atPipeEnd) return;
-    this.climb.mode = 'down';
-    this.pos.y = CLIMB_TOP;
+    this.climb.mode = 'riser';
+    this.pos.y = CLIMB_TOP - 0.05;
   }
 
-  /** Let go of the pipe and fall to the floor. */
+  /** Let go (of the pipe or the riser) and fall to the floor. */
   drop() {
-    if (!this.hanging) return;
-    this.climb.mode = 'drop';
-    this.pos.y = CLIMB_TOP;
+    const c = this.climb;
+    if (!c || c.mode === 'drop') return;
+    if (c.mode === 'hang') this.pos.y = CLIMB_TOP;
+    c.mode = 'drop';
     this.vy = 0;
   }
 
@@ -118,7 +128,7 @@ export class Player {
     if (this.locked) { mx = 0; mz = 0; }
     const len = Math.hypot(mx, mz);
     if (len > 0) { mx /= len; mz /= len; }
-    if (this.climb) { this.updateClimb(dt, input, mx, mz, boxes); return; }
+    if (this.climb) { this.updateClimb(dt, input, f, mx, mz, boxes); return; }
 
     this.running = !this.grabbing && (input.down('ShiftLeft') || input.down('ShiftRight'));
     const speed = this.grabbing ? SPEED.drag : this.crouched
@@ -138,22 +148,29 @@ export class Player {
     this.applyMesh();
   }
 
-  /** Pipe movement. mx/mz is the move input on the floor plane (camera-relative, unit length or 0). */
-  updateClimb(dt, input, mx, mz, boxes) {
+  /**
+   * Pipe movement. f is W/S (+1/-1) for the riser; mx/mz is the move input on the floor plane
+   * (camera-relative, unit length or 0) for shimmying.
+   */
+  updateClimb(dt, input, f, mx, mz, boxes) {
     const c = this.climb;
     this.vel.set(0, 0, 0);
     this.running = false;
     this.climbSpeed = 0;
-    if (c.mode === 'up') {
-      this.pos.y += CLIMB_SPEED * dt;
-      this.climbSpeed = CLIMB_SPEED;
-      if (this.pos.y >= CLIMB_TOP) c.mode = 'hang';
+    if (c.mode === 'riser') {
+      // Hand over hand: nothing happens until you push W or S.
+      this.pos.y = Math.max(0, Math.min(CLIMB_TOP, this.pos.y + f * CLIMB_SPEED * dt));
+      this.climbSpeed = Math.abs(f) * CLIMB_SPEED;
+      if (this.pos.y >= CLIMB_TOP && f > 0) c.mode = 'hang';
+      else if (this.pos.y <= 0 && f < 0) this.leavePipe(boxes);
+      else if (input.pressed('KeyC')) this.drop();
     } else if (c.mode === 'hang') {
+      if (input.pressed('Space')) c.style = c.style === 'legs' ? 'hands' : 'legs';
       // Whatever part of the input points along the pipe moves you along it.
       const d = c.pipe.dirAt(c.s);
       const along = mx * d.x + mz * d.z;
       const s0 = c.s;
-      c.s = Math.max(END_PAD, Math.min(c.pipe.length - END_PAD, c.s + along * SHIMMY_SPEED * dt));
+      c.s = Math.max(END_PAD, Math.min(c.pipe.length - END_PAD, c.s + along * SHIMMY_SPEED[c.style] * dt));
       this.climbSpeed = Math.abs(c.s - s0) / dt;
       const p = c.pipe.pointAt(c.s);
       this.pos.set(p.x, CLIMB_TOP, p.z);
@@ -162,10 +179,6 @@ export class Player {
         this.facing = turnToward(this.facing, Math.atan2(-d.x * sgn, -d.z * sgn), 10 * dt);
       }
       if (input.pressed('KeyC')) this.drop();
-    } else if (c.mode === 'down') {
-      this.pos.y -= CLIMB_SPEED * dt;
-      this.climbSpeed = CLIMB_SPEED;
-      if (this.pos.y <= 0) this.leavePipe(boxes);
     } else if (c.mode === 'drop') {
       this.vy -= GRAVITY * dt;
       this.pos.y += this.vy * dt;
@@ -182,7 +195,7 @@ export class Player {
   }
 
   applyMesh() {
-    if (this.hanging) {
+    if (this.tucked) {
       // Legs up: body lies along the pipe, head toward where he faces.
       this.body.scale.set(1, 1, 1);
       this.body.rotation.x = -Math.PI / 2;
@@ -203,7 +216,7 @@ export class Player {
   samplePoints() {
     const c = this.crouchBlend;
     const { x, y, z } = this.pos;
-    if (this.hanging) {
+    if (this.tucked) {
       const fx = -Math.sin(this.facing) * 0.7;
       const fz = -Math.cos(this.facing) * 0.7;
       return [
@@ -226,7 +239,7 @@ export class Player {
   get noiseRadius() {
     if (this.climb) {
       if (this.climb.mode === 'drop') return 0; // the landing is a one-off noise (main.js)
-      return CLIMB_NOISE * Math.min(1, this.climbSpeed / SHIMMY_SPEED);
+      return CLIMB_NOISE * Math.min(1, this.climbSpeed / SHIMMY_SPEED.legs);
     }
     const v = this.speed;
     if (v < 0.2) return 0;
@@ -245,6 +258,6 @@ export class Player {
 
   /** Camera pivot height above the floor: follows climbs and hangs. */
   get viewHeight() {
-    return this.hanging ? HANG_Y + 0.15 : this.pos.y + this.eyeHeight;
+    return this.tucked ? HANG_Y + 0.15 : this.pos.y + this.eyeHeight;
   }
 }

@@ -16,7 +16,7 @@ export function runTests(game) {
   const near = (a, b, r) => Math.hypot(a.x - b.x, a.z - b.z) <= r;
 
   function fresh() {
-    for (const k of ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyG', 'ShiftLeft']) d.release(k);
+    for (const k of ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyG', 'ShiftLeft', 'Space']) d.release(k);
     d.reset();
   }
 
@@ -130,8 +130,8 @@ export function runTests(game) {
 
   test('Guard hears footsteps behind him and turns to check', () => {
     d.simulate(1 / 60);
-    const bx = guard.pos.x + Math.sin(guard.yaw) * 2.5;
-    const bz = guard.pos.z + Math.cos(guard.yaw) * 2.5;
+    const bx = guard.pos.x + Math.sin(guard.yaw) * 1.5;
+    const bz = guard.pos.z + Math.cos(guard.yaw) * 1.5;
     place(bx, bz);
     game.cam.yaw = guard.yaw + Math.PI; // walk away from him, staying behind
     d.hold('KeyW');
@@ -229,8 +229,11 @@ export function runTests(game) {
     d.simulate(0.05);
     check(game.interact && game.interact.kind === 'pipe', 'no climb prompt at the riser');
     d.press('KeyE');
+    d.simulate(1);
+    check(player.climb && player.climb.mode === 'riser' && player.pos.y === 0, 'climbed without pressing W');
+    d.hold('KeyW');
     d.simulate(2);
-    check(player.hanging, `not hanging after climbing (stance ${player.stance})`);
+    check(player.hanging, `not hanging after holding W (stance ${player.stance})`);
     check(player.viewHeight > 3, 'camera did not go up with the player');
     d.hold('KeyW');
     d.simulate(40, () => { if (player.climb) alongPipe(); });
@@ -239,7 +242,11 @@ export function runTests(game) {
     d.simulate(0.05);
     check(game.interact && game.interact.kind === 'pipeDown', 'no climb-down prompt at the far end');
     d.press('KeyE');
-    d.simulate(3);
+    d.simulate(0.5);
+    check(player.climb && player.climb.mode === 'riser' && player.pos.y > 1, 'did not swing onto the riser');
+    d.hold('KeyS');
+    d.simulate(3, () => { if (!player.climb) d.release('KeyS'); });
+    d.release('KeyS');
     check(!player.climb && player.pos.y === 0, `not back on the floor (stance ${player.stance})`);
     check(near(player.pos, b.pos, 0.5), 'climbed down somewhere other than the far riser');
   });
@@ -262,6 +269,35 @@ export function runTests(game) {
     check(!player.climb && player.pos.y === 0, `still in the air (stance ${player.stance})`);
     check(game.impact && game.dropHeard, 'guard did not hear the landing');
     check(guard.state !== 'patrol', `guard still patrolling (${guard.state})`);
+  });
+
+  test('Space switches between legs-up and hanging by the hands', () => {
+    hangAt(8);
+    const lowest = () => Math.min(...player.samplePoints().map((p) => p.y));
+    const tuckedLow = lowest();
+    d.press('Space');
+    d.simulate(0.05);
+    check(player.hanging && player.climb.style === 'hands', `style ${player.climb && player.climb.style}`);
+    check(lowest() < tuckedLow, 'hanging by the hands does not hang lower than legs-up');
+    const s0 = player.climb.s;
+    alongPipe();
+    d.hold('KeyW');
+    d.simulate(0.5);
+    d.release('KeyW');
+    check(player.climb.s > s0 + 0.2, 'cannot shimmy while hanging by the hands');
+    d.press('Space');
+    d.simulate(0.05);
+    check(player.tucked, 'Space did not go back to legs-up');
+  });
+
+  test('Dropping onto a guard knocks him out', () => {
+    d.simulate(1 / 60);
+    hangAt(23.5);
+    guard.pos.set(player.pos.x, 0, player.pos.z); // right underneath
+    d.press('KeyC');
+    d.simulate(1.5);
+    check(game.dropKO && guard.state === 'down', `guard ${guard.state} after the drop`);
+    check(game.touched && game.state === 'playing', 'run not marked as touched, or it ended');
   });
 
   test('No takedowns or switches from the pipe', () => {
