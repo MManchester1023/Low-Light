@@ -31,3 +31,6 @@
   (arc line and landing ring), release to throw. It smashes on the first thing it hits with an 8 m noise
   (halved through walls); a guard who hears it turns to it, walks over and looks around.
 - ✔ v0.4: Guard view cone widened from 90° to 120° to match the design doc.
+- ✔ v0.5: Guard memory: guards remember spots where they heard a noise, saw the player or found a dead
+  light (at its switch), for the rest of the mission. Nearby events stack onto one spot. Every 20 s of patrol
+  he detours to the spot most worth checking, looks around for 3.5 s, then carries on. V shows the spots.

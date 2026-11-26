@@ -2,6 +2,8 @@
 // States: patrol → suspicious (stops, turns to the stimulus) → investigate (walks to it)
 //         → look (scans around) → back to patrol, warier.
 //         relight: a guard who sees a dead light walks to its switch and turns it back on.
+//         check: on patrol, detours to a remembered spot (noise heard, player seen, dead light found),
+//                looks around, then carries on with the route.
 //         alert: 100 suspicion = player spotted.
 // Sight can fill the meter to 100; sound alone can only bring a guard to investigate (NOISE_CAP).
 // Every number below is a starting guess to tune in playtests.
@@ -32,6 +34,10 @@ const REAR_COS = Math.cos((110 * Math.PI) / 180); // player must be in the rear 
 const INVESTIGATE_AT = 50;
 const CALM_AT = 10;
 const WALK = 1.4;
+const MEMORY_MERGE = 3;         // m: events this close count as the same remembered spot
+const CHECK_EVERY = 20;         // s of patrol between detours to remembered spots (guess)
+const CHECK_LOOK = 3.5;         // s spent looking around at a remembered spot
+const MEMORY_WEIGHT = { sound: 1, sight: 2, light: 1 }; // how much each event makes a spot worth checking
 const INVESTIGATE_WALK = 1.3;
 
 export class Guard {
@@ -67,6 +73,13 @@ export class Guard {
     this.group.add(cone);
 
     scene.add(this.group);
+    // Debug markers for remembered spots (shown with the view cone on V).
+    this.markerGroup = new THREE.Group();
+    this.markerGroup.visible = false;
+    scene.add(this.markerGroup);
+    this.markerGeo = new THREE.RingGeometry(0.35, 0.45, 20);
+    this.markerMat = new THREE.MeshBasicMaterial({ color: 0xff8844, transparent: true, opacity: 0.5,
+      depthWrite: false, side: THREE.DoubleSide });
     this.pos = new THREE.Vector3();
     this.stimulus = new THREE.Vector3(); // where he last saw or heard the player
     this.reset();
@@ -94,6 +107,11 @@ export class Guard {
     this.grabTime = 0;
     this.koTime = 0;
     this.brokeFree = false;
+    this.clock = 0;
+    this.memory = [];           // [{ pos, weight, lastChecked }] spots worth patrolling (for the whole mission)
+    this.checkCooldown = CHECK_EVERY;
+    this.checkSpot = null;
+    this.markerGroup.clear();
     this.rig.rotation.set(0, 0, 0);
     this.rig.position.set(0, 0, 0);
     this.applyMesh();
@@ -121,16 +139,50 @@ export class Guard {
 
   toggleCone() {
     this.cone.visible = !this.cone.visible;
+    this.markerGroup.visible = this.cone.visible;
   }
 
   get icon() {
     if (this.state === 'alert') return '!';
-    if (this.state === 'patrol' || this.disabled) return '';
+    if (this.state === 'patrol' || this.state === 'check' || this.disabled) return '';
     return '?';
   }
 
+  /** Remember a spot where something happened; nearby events stack onto the same spot. */
+  remember(pos, kind) {
+    const w = MEMORY_WEIGHT[kind] ?? 1;
+    let spot = this.memory.find((m) => Math.hypot(m.pos.x - pos.x, m.pos.z - pos.z) < MEMORY_MERGE);
+    if (spot) spot.weight += w;
+    else {
+      spot = { pos: new THREE.Vector3(pos.x, 0, pos.z), weight: w, lastChecked: this.clock };
+      this.memory.push(spot);
+      const marker = new THREE.Mesh(this.markerGeo, this.markerMat);
+      marker.rotation.x = -Math.PI / 2;
+      marker.position.set(pos.x, 0.04, pos.z);
+      this.markerGroup.add(marker);
+      spot.marker = marker;
+    }
+    spot.lastChecked = this.clock; // he has just been dealing with it
+    spot.marker.scale.setScalar(Math.min(2, 0.8 + 0.2 * spot.weight));
+    this.checkCooldown = Math.max(this.checkCooldown, CHECK_EVERY);
+  }
+
+  /** Remembered spot most worth a look: busy spots and ones not checked for a while win. */
+  pickMemory() {
+    let best = null;
+    let bestScore = 0;
+    for (const m of this.memory) {
+      const score = m.weight * (this.clock - m.lastChecked + 5);
+      if (score > bestScore) { bestScore = score; best = m; }
+    }
+    return best;
+  }
+
   setState(s) {
+    if (s === 'investigate') this.remember(this.stimulus, this.stimulusKind === 'sight' ? 'sight' : 'sound');
+    else if (s === 'suspicious' && this.stimulusKind === 'sight') this.remember(this.stimulus, 'sight');
     this.state = s;
+    this.checkLookFrom = undefined;
     this.stateTime = 0;
     this.path = null;
     this.pathTarget = null;
@@ -202,6 +254,8 @@ export class Guard {
       if (eye.distanceTo(L.pos) > DARK_NOTICE) continue;
       if (segmentBlocked(eye, L.pos, level.boxes)) continue;
       this.knownDark.add(L.id);
+      const sw = level.switchFor(L.group);
+      this.remember(sw ? sw.pos : L.pos, 'light');
     }
   }
 
@@ -221,6 +275,7 @@ export class Guard {
 
   update(dt, player, samples, sampleLight, level, noise) {
     const boxes = level.boxes;
+    this.clock += dt;
     if (this.disabled) { this.updateDisabled(dt); this.applyMesh(); return; }
 
     // --- Senses and the suspicion meter ---
@@ -258,7 +313,30 @@ export class Guard {
         if (this.suspicion >= SUSPICIOUS_AT || (this.hearing && this.suspicion >= HEAR_REACT_AT)) { this.setState('suspicious'); break; }
         const job = this.pickRelight(level);
         if (job) { this.relight = job; this.setState('relight'); break; }
+        this.checkCooldown -= dt;
+        if (this.checkCooldown <= 0 && this.pauseTimer <= 0) {
+          const spot = this.pickMemory();
+          if (spot) { this.checkSpot = spot; this.setState('check'); break; }
+        }
         this.patrol(dt, boxes, level);
+        break;
+      }
+
+      case 'check': {
+        // Calm detour to a remembered spot: walk there, look around, back to the route.
+        if (this.suspicion >= SUSPICIOUS_AT || (this.hearing && this.suspicion >= HEAR_REACT_AT)) { this.setState('suspicious'); break; }
+        const spot = this.checkSpot;
+        if (this.checkLookFrom === undefined) {
+          if (this.moveTo(spot.pos, WALK, dt, boxes, level, 1.0) || this.stateTime > 15) this.checkLookFrom = this.stateTime;
+        } else {
+          this.yaw = wrapAngle(this.yaw + Math.sin((this.stateTime - this.checkLookFrom) * 1.6) * 1.4 * dt);
+          if (this.stateTime - this.checkLookFrom > CHECK_LOOK) {
+            spot.lastChecked = this.clock;
+            this.checkSpot = null;
+            this.checkCooldown = CHECK_EVERY;
+            this.setState('patrol');
+          }
+        }
         break;
       }
 
