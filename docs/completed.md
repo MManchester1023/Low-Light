@@ -47,3 +47,14 @@
   footsteps louder. Pistol is drawn/holstered with 1 and reloads with R (3-round magazine, 6 spare). Pause menu
   (Esc/P) with Resume, Restart and Settings; Settings lists every key and lets you rebind it (saved in the
   browser). The key help text at the top of the screen is gone.
+
+## v0.9
+
+- ✔ v0.9: Second guard in the test level (north half of the west room).
+- ✔ v0.9 (status #4): Full alert: instead of failing the level, the guard who spots you radios the others;
+  every guard hunts you, sharing your last seen or heard position, searches around it and shoots on sight.
+  Three hits kill you. Break line of sight and stay hidden for 40 s and they give up, back to patrol warier.
+  A full alert drops the rating to Cleared.
+- ✔ v0.9 (status #5): Evidence: a door to the south doorway (closed to start; guards open and shut it on
+  their way). A door you leave open, or a guard lying on the floor (knocked out or dead, seen in light or up
+  close), makes a guard suspicious and sends him to look; he shuts the door.

@@ -4,7 +4,7 @@ import { resolveCircle } from './collision.js';
 
 const GLASS_R = 0.8; // m: how far a shot-out light's glass spreads on the floor (guess)
 
-// Builds the single-room level: geometry, lights, switches, objective, guard route.
+// Builds the test level: two rooms, geometry, lights, switches, a door, objective, guard routes.
 export function buildLevel(scene) {
   const boxes = [];
   const lights = [];
@@ -51,9 +51,12 @@ export function buildLevel(scene) {
   box(0, 9.15, 24.6, 4, 0.3, wallMat); // south
   box(-12.15, 0, 0.3, 4, 18, wallMat); // west
   box(12.15, 0, 0.3, 4, 18, wallMat); // east
-  // Divider at x=2 with gaps at z -3..0 and z 5..9
+  // Divider at x=2: open doorway at z -3..0, a door at z 6.4..7.6
   box(2, -6, 0.3, 4, 6, wallMat);
   box(2, 2.5, 0.3, 4, 5, wallMat);
+  box(2, 5.7, 0.3, 4, 1.4, wallMat);
+  box(2, 8.3, 0.3, 4, 1.4, wallMat);
+  box(2, 7, 0.3, 1.8, 1.2, wallMat, 2.2); // above the door
 
   // ---------- Cover ----------
   box(-6, 4, 1.2, 1.1, 1.2, crateMat);
@@ -210,7 +213,62 @@ export function buildLevel(scene) {
     use: () => { files.visible = false; },
   });
 
-  // ---------- Guard route ----------
+  // ---------- Door ----------
+  // Starts closed. Closed, it is solid: blocks movement, sight, light and halves noise like a wall.
+  // Guards walk through it (they open it and shut it behind them); one the player leaves open is evidence.
+  const navBoxes = boxes.slice(); // guard paths ignore doors (they open them on the way)
+  const doors = [];
+  const doorMat = mat(0x5a4632, 0.7);
+  function addDoor(x, z0, z1) {
+    const pivot = new THREE.Group(); // hinge at z0
+    pivot.position.set(x, 0, z0);
+    const leaf = new THREE.Mesh(new THREE.BoxGeometry(0.08, 2.2, z1 - z0 - 0.04), doorMat);
+    leaf.position.set(0, 1.1, (z1 - z0) / 2);
+    leaf.castShadow = true;
+    leaf.receiveShadow = true;
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 6), mat(0xb0a070, 0.4, { metalness: 0.6 }));
+    knob.position.set(0.07, 1.0, z1 - z0 - 0.15);
+    pivot.add(leaf, knob);
+    scene.add(pivot);
+    const door = {
+      center: new THREE.Vector3(x, 1.1, (z0 + z1) / 2),
+      box: { min: { x: x - 0.05, y: 0, z: z0 }, max: { x: x + 0.05, y: 2.2, z: z1 } },
+      normal: { x: 1, z: 0 }, // the door faces along x
+      open: false, openedBy: null, pivot,
+    };
+    doors.push(door);
+    interactables.push({
+      kind: 'door', door,
+      pos: new THREE.Vector3(x, 0, door.center.z),
+      range: 1.4,
+      label: () => (door.open ? 'E: close door' : 'E: open door'),
+      use: () => setDoor(door, !door.open, 'player'),
+    });
+    return door;
+  }
+  const level = { occupants: () => [] }; // main.js fills this in: positions that stop a door closing
+
+  /** Open or close a door. Closing fails (returns false) if someone is standing in the doorway. */
+  function setDoor(door, open, by = 'player') {
+    if (door.open === open) return true;
+    if (!open) {
+      const b = door.box;
+      for (const p of level.occupants()) {
+        if (p.x > b.min.x - 0.4 && p.x < b.max.x + 0.4 && p.z > b.min.z - 0.3 && p.z < b.max.z + 0.3) return false;
+      }
+      boxes.push(door.box);
+    } else {
+      boxes.splice(boxes.indexOf(door.box), 1);
+    }
+    door.open = open;
+    door.openedBy = open ? by : null;
+    door.pivot.rotation.y = open ? Math.PI / 2 : 0; // swings into the east room
+    return true;
+  }
+  addDoor(2, 6.4, 7.6);
+  for (const d of doors) boxes.push(d.box); // closed to start
+
+  // ---------- Guard routes ----------
   const guardRoute = [
     { x: 6, z: -6, pause: 2, lookYaw: 0 },
     { x: 4, z: -1.5 },
@@ -220,11 +278,18 @@ export function buildLevel(scene) {
     { x: 10, z: 6 },
     { x: 10, z: -2, pause: 2, lookYaw: Math.PI / 2 },
   ];
+  // Second guard: the north half of the west room.
+  const guardRoute2 = [
+    { x: -10, z: -5, pause: 2.5, lookYaw: -Math.PI / 2 },
+    { x: -7, z: -7 },
+    { x: -1, z: -7, pause: 2, lookYaw: Math.PI / 2 },
+    { x: -7, z: -7 },
+  ];
 
   // ---------- Guard nav nodes (doorways and open floor spots, all clear of furniture) ----------
   const navNodes = [
     [2, -1.5], [0.5, -1.5], [3.5, -1.5],            // middle doorway
-    [2, 7], [0.5, 7], [3, 4.7],                      // south doorway
+    [2, 7], [0.5, 7], [3.3, 7], [3, 4.7],            // south door
     [-3, -1.5], [-9, 0.5], [-10, 5], [-3, 6.5], [-7, -7], [-1, -7], [-10, -5],  // west room
     [6, -6], [10, -2], [10, 6], [6, 6], [8.5, -4], [11, 2], [5, 3],            // east room
   ].map(([x, z]) => new THREE.Vector3(x, 0, z));
@@ -270,6 +335,9 @@ export function buildLevel(scene) {
   }
 
   function reset() {
+    for (const d of doors) {
+      if (d.open) { boxes.push(d.box); d.open = false; d.openedBy = null; d.pivot.rotation.y = 0; }
+    }
     for (const l of lights) { l.broken = false; setLightOn(l, true); }
     for (const g of glass) scene.remove(g.mesh);
     glass.length = 0;
@@ -277,13 +345,16 @@ export function buildLevel(scene) {
     files.visible = true;
   }
 
-  return {
+  return Object.assign(level, {
     boxes,
+    navBoxes,
+    doors,
+    setDoor,
     lights,
     interactables,
     bottleSpot: { x: -6, y: 1.1, z: 4 }, // on the crate near the start
     playerStart: { x: -10, z: 7, yaw: -Math.PI / 3 },
-    guardRoute,
+    guardRoutes: [guardRoute, guardRoute2],
     navNodes,
     pipes,
     switchFor,
@@ -292,5 +363,5 @@ export function buildLevel(scene) {
     glass,
     onGlass,
     reset,
-  };
+  });
 }

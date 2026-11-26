@@ -43,10 +43,10 @@ function segmentCylinderT(a, ab, c, r, h) {
 }
 
 /**
- * Trace one shot from `origin` along unit `dir`. Returns { kind: 'guard' | 'light' | 'wall' | 'miss', point, light }.
+ * Trace one shot from `origin` along unit `dir`. Returns { kind: 'guard' | 'light' | 'wall' | 'miss', point, light, guard }.
  * A guard counts as a target unless he's already lying on the floor.
  */
-export function traceShot(origin, dir, level, guard) {
+export function traceShot(origin, dir, level, guards) {
   const end = origin.clone().addScaledVector(dir, RANGE);
   const ab = end.clone().sub(origin);
   const len2 = ab.lengthSq();
@@ -58,11 +58,13 @@ export function traceShot(origin, dir, level, guard) {
     const t = segmentSphereT(origin, ab, len2, L.fixture.position, LIGHT_R);
     if (t < best) { best = t; kind = 'light'; light = L; }
   }
-  if (guard.state !== 'down' && guard.state !== 'dead') {
-    const t = segmentCylinderT(origin, ab, guard.pos, GUARD_R, GUARD_H);
-    if (t < best) { best = t; kind = 'guard'; light = null; }
+  let guard = null;
+  for (const g of guards) {
+    if (!g.active || g.state === 'down' || g.state === 'dead') continue;
+    const t = segmentCylinderT(origin, ab, g.pos, GUARD_R, GUARD_H);
+    if (t < best) { best = t; kind = 'guard'; light = null; guard = g; }
   }
-  return { kind, light, point: origin.clone().addScaledVector(ab, Math.min(best, 1)) };
+  return { kind, light, guard, point: origin.clone().addScaledVector(ab, Math.min(best, 1)) };
 }
 
 /** Small gun model the player holds up while aiming. */

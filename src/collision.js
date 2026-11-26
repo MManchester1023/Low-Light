@@ -44,6 +44,7 @@ export function resolveCircle(pos, r, boxes) {
   for (let pass = 0; pass < 2; pass++) {
     for (const b of boxes) {
       if (b.max.y < 0.3) continue; // too low to block
+      if (b.min.y > 2.0) continue; // overhead (the wall above a door): walk under it
       const cx = Math.min(b.max.x, Math.max(b.min.x, pos.x));
       const cz = Math.min(b.max.z, Math.max(b.min.z, pos.z));
       const dx = pos.x - cx;

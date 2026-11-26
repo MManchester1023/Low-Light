@@ -4,13 +4,18 @@
 //         relight: a guard who sees a dead light walks to its switch and turns it back on.
 //         check: on patrol, detours to a remembered spot (noise heard, player seen, dead light found),
 //                looks around, then carries on with the route.
-//         alert: 100 suspicion = player spotted.
+//         hunt: 100 suspicion = full alert. He radios the others; every guard hunts the player, sharing
+//               where he was last seen or heard, and shoots on sight. If nobody finds him for a while the
+//               alert ends and they go back to patrol, warier.
+// Evidence: a shot-out light, a door the player left open, or a guard lying on the floor makes him
+// suspicious and sends him to look (capped at NOISE_CAP like sound).
 // Sight can fill the meter to 100; sound alone can only bring a guard to investigate (NOISE_CAP).
 // Every number below is a starting guess to tune in playtests.
 
 import * as THREE from 'three';
 import { segmentBlocked, resolveCircle } from './collision.js';
 import { findPath } from './nav.js';
+import { lightAt } from './lighting.js';
 import { clamp, turnToward, wrapAngle, yawFromDir } from './utils.js';
 
 const EYE_H = 1.65;
@@ -41,10 +46,55 @@ const CHECK_EVERY = 20;         // s of patrol between detours to remembered spo
 const CHECK_LOOK = 3.5;         // s spent looking around at a remembered spot
 const MEMORY_WEIGHT = { sound: 1, sight: 2, light: 1 }; // how much each event makes a spot worth checking
 const INVESTIGATE_WALK = 1.3;
+const DOOR_SUSPICION = 20;      // added when he spots a door the player left open (guess)
+const BODY_SUSPICION = 45;      // added when he finds a guard lying on the floor (guess)
+const BODY_SEEN_LIGHT = 0.15;   // a body in darker light than this is only seen up close (guess)
+// Full alert (all guesses):
+const HUNT_RUN = 3.0;           // m/s while hunting
+const HUNT_LOOK = 3;            // s spent looking around at each search spot
+export const HUNT_GIVE_UP = 40; // s with nobody seeing or hearing the player before the alert ends
+const SEARCH_R = 10;            // m: search spots are nav nodes this close to the last known position
+const FIRE_RANGE = 10;          // m: closer than this he stands and shoots; further, he closes in
+const AIM_TIME = 0.8;           // s from seeing the player to the first shot
+const FIRE_EVERY = 1.1;         // s between shots
+const GUN_NOISE = 12;           // m: an unsuppressed guard pistol
+
+/** Shared knowledge for all guards: one full alert at a time. Created once in main.js. */
+export function makeSquad() {
+  return {
+    guards: [],
+    time: 0,
+    alerted: false, // full alert reached at some point this run (rating)
+    hunt: { active: false, pos: new THREE.Vector3(), t: 0, version: 0, searched: new Map() },
+    shots: [],      // guard gunshots this step: { from, to, hit, guard, noise }, read by main.js
+  };
+}
+
+export function resetSquad(squad) {
+  squad.time = 0;
+  squad.alerted = false;
+  squad.hunt.active = false;
+  squad.hunt.version = 0;
+  squad.hunt.searched.clear();
+  squad.shots.length = 0;
+}
+
+/** Ends the alert once nobody has seen or heard the player for HUNT_GIVE_UP s (or nobody is left to hunt). */
+export function updateSquad(squad, dt) {
+  squad.time += dt;
+  const h = squad.hunt;
+  if (!h.active) return;
+  const hunters = squad.guards.filter((g) => g.active && g.state === 'hunt');
+  if (hunters.length && squad.time - h.t < HUNT_GIVE_UP) return;
+  h.active = false;
+  for (const g of hunters) g.standDown();
+}
 
 export class Guard {
-  constructor(scene, route) {
+  constructor(scene, route, squad) {
     this.route = route;
+    this.squad = squad;
+    squad.guards.push(this);
     this.group = new THREE.Group();
 
     const body = new THREE.Mesh(
@@ -88,6 +138,8 @@ export class Guard {
   }
 
   reset() {
+    this.active = true;
+    this.group.visible = true;
     const w = this.route[0];
     this.pos.set(w.x, 0, w.z);
     this.yaw = w.lookYaw ?? 0;
@@ -102,6 +154,16 @@ export class Guard {
     this.visibility = 0;
     this.wary = false;
     this.knownDark = new Set(); // ids of dead lights this guard has noticed
+    this.knownDoors = new Set(); // doors he has seen left open (forgotten once closed)
+    this.knownBodies = new Set(); // guards he has found on the floor
+    this.closeDoor = null;      // a player-opened door he means to shut once he gets there
+    this.openedDoor = null;     // a door he opened himself to walk through; he shuts it behind him
+    this.aim = 0;               // s spent aiming at the player during a hunt
+    this.accuracy = 0;          // hit-chance accumulator (deterministic: a hit each time it passes 1)
+    this.huntGoal = null;
+    this.huntVersion = -1;
+    this.huntLookAt = null;
+    this.huntGoalTime = 0;
     this.relight = null;        // { group, sw, flipAt }
     this.path = null;
     this.pathTarget = null;
@@ -119,6 +181,13 @@ export class Guard {
     this.applyMesh();
   }
 
+  /** Take him out of the level entirely (used by tests that need a single guard). */
+  setActive(on) {
+    this.active = on;
+    this.group.visible = on;
+    if (!on) this.markerGroup.visible = false;
+  }
+
   /** Out of action or held: no senses, no patrol. */
   get disabled() {
     return this.state === 'grabbed' || this.state === 'ko' || this.state === 'down' || this.state === 'dead';
@@ -126,7 +195,7 @@ export class Guard {
 
   /** Player close behind an unaware guard. */
   canTakedown(player) {
-    if (this.disabled || this.state === 'alert' || this.seeing) return false;
+    if (!this.active || this.disabled || this.seeing) return false;
     const dx = player.pos.x - this.pos.x;
     const dz = player.pos.z - this.pos.z;
     const d = Math.hypot(dx, dz);
@@ -141,15 +210,60 @@ export class Guard {
   dropKnockOut() { this.suspicion = 0; this.setState('down'); this.koTime = 0; }
   /** Shot: falls and stays down for good. */
   kill() { this.suspicion = 0; this.setState('dead'); this.koTime = 0; this.rig.rotation.set(0.3, 0, 0); }
-  breakFree() { this.rig.rotation.x = 0; this.suspicion = 100; this.setState('alert'); }
+  breakFree(playerPos) {
+    this.rig.rotation.set(0, 0, 0);
+    this.stimulus.set(playerPos.x, 0, playerPos.z);
+    this.joinHunt();
+    this.raiseAlert(playerPos);
+  }
+
+  /** Full alert: this guard radios the player's position and every guard who can joins the hunt. */
+  raiseAlert(pos) {
+    const sq = this.squad;
+    const h = sq.hunt;
+    sq.alerted = true;
+    if (!h.active) h.searched.clear();
+    h.active = true;
+    this.report(pos);
+    for (const g of sq.guards) if (g.active && !g.disabled && g.state !== 'hunt') g.joinHunt();
+  }
+
+  /** Share a sighting or a heard noise with the other hunters. */
+  report(pos) {
+    const h = this.squad.hunt;
+    h.pos.set(pos.x, 0, pos.z);
+    h.t = this.squad.time;
+    h.version++;
+  }
+
+  joinHunt() {
+    this.relight = null;
+    this.checkSpot = null;
+    this.suspicion = 100;
+    this.wary = true;
+    this.aim = 0;
+    this.huntGoal = null;
+    this.huntVersion = -1;
+    this.setState('hunt');
+  }
+
+  /** Alert over: back to patrol, warier, remembering where the player was last known to be. */
+  standDown() {
+    this.remember(this.squad.hunt.pos, 'sight');
+    this.suspicion = SUSPICIOUS_AT + 15;
+    this.stimulus.copy(this.squad.hunt.pos);
+    this.stimulusKind = 'sight';
+    this.wary = true;
+    this.setState('look');
+  }
 
   toggleCone() {
     this.cone.visible = !this.cone.visible;
-    this.markerGroup.visible = this.cone.visible;
+    this.markerGroup.visible = this.cone.visible && this.active;
   }
 
   get icon() {
-    if (this.state === 'alert') return '!';
+    if (this.state === 'hunt') return '!';
     if (this.state === 'patrol' || this.state === 'check' || this.disabled) return '';
     return '?';
   }
@@ -240,9 +354,10 @@ export class Guard {
    * to check it out. Sound alone still can't take suspicion past NOISE_CAP. Returns true if heard.
    */
   hearImpact(pos, radius, boxes) {
-    if (this.disabled || this.state === 'alert') return false;
+    if (!this.active || this.disabled) return false;
     const loud = this.listen({ pos, radius }, boxes);
     if (loud <= 0) return false;
+    if (this.state === 'hunt') { this.report(pos); return true; }
     this.suspicion = Math.min(NOISE_CAP, Math.max(this.suspicion, SUSPICIOUS_AT) + IMPACT_SUSPICION * loud);
     this.stimulus.set(pos.x, 0, pos.z);
     this.stimulusKind = 'sound';
@@ -253,12 +368,13 @@ export class Guard {
   }
 
   /**
-   * Something is wrong (a shot-out light): he gets suspicious, walks over to look under it and searches.
-   * Like sound, this alone can't take suspicion past NOISE_CAP.
+   * Something is wrong (a shot-out light, an open door, a body): he gets suspicious, walks over to look and
+   * searches. Like sound, this alone can't take suspicion past NOISE_CAP.
    */
-  noticeEvidence(pos) {
-    if (this.disabled || this.state === 'alert') return;
-    this.suspicion = Math.min(NOISE_CAP, Math.max(this.suspicion, SUSPICIOUS_AT) + EVIDENCE_SUSPICION);
+  noticeEvidence(pos, amount = EVIDENCE_SUSPICION) {
+    if (!this.active || this.disabled || this.state === 'hunt') return;
+    this.wary = true;
+    this.suspicion = Math.min(NOISE_CAP, Math.max(this.suspicion, SUSPICIOUS_AT) + amount);
     this.stimulus.set(pos.x, 0, pos.z);
     this.stimulusKind = 'evidence';
     this.sinceStimulus = 0;
@@ -282,6 +398,75 @@ export class Guard {
     }
   }
 
+  /** True if point p (at any height) is inside his view cone and range, with nothing solid in the way. */
+  canSee(p, boxes, range = RANGE) {
+    const eye = this.eye();
+    const dx = p.x - eye.x;
+    const dz = p.z - eye.z;
+    const hd = Math.hypot(dx, dz);
+    if (Math.hypot(hd, p.y - eye.y) > range) return false;
+    if (hd > 0.01 && (dx * -Math.sin(this.yaw) + dz * -Math.cos(this.yaw)) / hd < Math.cos(FOV_HALF)) return false;
+    return !segmentBlocked(eye, p, boxes);
+  }
+
+  /** Doors the player left open, seen for the first time: suspicious, he goes over and shuts them. */
+  checkDoors(level) {
+    for (const door of level.doors) {
+      if (!door.open || door.openedBy !== 'player') { this.knownDoors.delete(door); continue; }
+      if (this.knownDoors.has(door)) continue;
+      if (!this.canSee(door.center, level.boxes, DARK_NOTICE)) continue;
+      this.knownDoors.add(door);
+      // Look from his own side of the doorway (walking to the middle of it would take him through).
+      const n = door.normal;
+      const side = Math.sign((this.pos.x - door.center.x) * n.x + (this.pos.z - door.center.z) * n.z) || 1;
+      const spot = new THREE.Vector3(door.center.x + n.x * side * 0.9, 0, door.center.z + n.z * side * 0.9);
+      this.remember(spot, 'light');
+      this.closeDoor = door;
+      this.noticeEvidence(spot, DOOR_SUSPICION);
+    }
+  }
+
+  /** Guards lying on the floor (knocked out or dead) he can see: suspicious, he goes to the body. */
+  checkBodies(level) {
+    for (const g of this.squad.guards) {
+      if (g === this || !g.active || (g.state !== 'down' && g.state !== 'dead')) continue;
+      if (this.knownBodies.has(g)) continue;
+      const p = new THREE.Vector3(g.pos.x, 0.35, g.pos.z);
+      const d = Math.hypot(p.x - this.pos.x, p.z - this.pos.z);
+      if (d > 2.5 && lightAt(p, level) < BODY_SEEN_LIGHT) continue; // dark hides a body, except up close
+      if (!this.canSee(p, level.boxes)) continue;
+      this.knownBodies.add(g);
+      this.remember(g.pos, 'sight');
+      this.noticeEvidence(g.pos, BODY_SUSPICION);
+    }
+  }
+
+  /** Doors: open a closed one that's in his way, shut the one he came through, shut one the player left open. */
+  handleDoors(level) {
+    for (const door of level.doors) {
+      if (door.open) continue;
+      const next = this.path && this.path[0];
+      if (!next || Math.hypot(door.center.x - this.pos.x, door.center.z - this.pos.z) > 1.1) continue;
+      const a = new THREE.Vector3(this.pos.x, 1, this.pos.z);
+      const b = new THREE.Vector3(next.x, 1, next.z);
+      if (!segmentBlocked(a, b, [door.box])) continue;
+      level.setDoor(door, true, 'guard');
+      this.openedDoor = door;
+    }
+    const mine = this.openedDoor;
+    if (mine && (!mine.open || mine.openedBy !== 'guard')) this.openedDoor = null;
+    else if (mine && this.state !== 'hunt'
+      && Math.hypot(mine.center.x - this.pos.x, mine.center.z - this.pos.z) > 1.6) {
+      if (level.setDoor(mine, false)) this.openedDoor = null;
+    }
+    const left = this.closeDoor;
+    if (left && !left.open) this.closeDoor = null;
+    else if (left && this.state !== 'hunt'
+      && Math.hypot(left.center.x - this.pos.x, left.center.z - this.pos.z) < 2.0) {
+      if (level.setDoor(left, false)) this.closeDoor = null;
+    }
+  }
+
   /** Switch for the nearest dead light he knows about, or null. */
   pickRelight(level) {
     let best = null;
@@ -298,6 +483,7 @@ export class Guard {
 
   update(dt, player, samples, sampleLight, level, noise) {
     const boxes = level.boxes;
+    if (!this.active) return;
     this.clock += dt;
     if (this.disabled) { this.updateDisabled(dt); this.applyMesh(); return; }
 
@@ -320,16 +506,23 @@ export class Guard {
       this.stimulusKind = this.seeing ? 'sight' : 'sound';
       this.sinceStimulus = 0;
       this.stimulus.set(player.pos.x, 0, player.pos.z);
+      if (this.state === 'hunt') this.report(player.pos);
+    } else if (this.state === 'hunt') {
+      this.sinceStimulus += dt;
     } else {
       this.sinceStimulus += dt;
       if (this.sinceStimulus > HOLD) this.suspicion = Math.max(0, this.suspicion - DECAY * dt);
     }
 
-    if (this.state !== 'alert') this.checkLights(level);
+    if (this.state !== 'hunt') {
+      this.checkLights(level);
+      this.checkDoors(level);
+      this.checkBodies(level);
+    }
 
     // --- Behaviour ---
     this.stateTime += dt;
-    if (this.suspicion >= 100 && this.state !== 'alert') this.setState('alert');
+    if (this.suspicion >= 100 && this.state !== 'hunt') { this.joinHunt(); this.raiseAlert(player.pos); }
 
     switch (this.state) {
       case 'patrol': {
@@ -407,11 +600,74 @@ export class Guard {
         }
         break;
 
-      case 'alert':
-        this.face(player.pos, 4 * dt);
+      case 'hunt':
+        this.suspicion = 100;
+        this.hunt(dt, player, level);
         break;
     }
+    this.handleDoors(level);
     this.applyMesh();
+  }
+
+  /** Full alert: shoot the player on sight, otherwise run to where he was last known to be and search around it. */
+  hunt(dt, player, level) {
+    const boxes = level.boxes;
+    const h = this.squad.hunt;
+    if (this.seeing) {
+      const d = Math.hypot(player.pos.x - this.pos.x, player.pos.z - this.pos.z);
+      this.huntGoal = null;
+      if (d > FIRE_RANGE) { this.moveTo(player.pos, HUNT_RUN, dt, boxes, level, FIRE_RANGE * 0.8); this.aim = 0; return; }
+      this.path = null;
+      this.face(player.pos, 5 * dt);
+      const want = yawFromDir(player.pos.x - this.pos.x, player.pos.z - this.pos.z);
+      this.aim += dt;
+      if (this.aim >= AIM_TIME && Math.abs(wrapAngle(want - this.yaw)) < 0.25) {
+        this.aim = AIM_TIME - FIRE_EVERY;
+        this.shoot(player, d);
+      }
+      return;
+    }
+    this.aim = Math.min(this.aim, 0);
+    // New information from anyone: drop the search and go there.
+    if (!this.huntGoal || this.huntVersion !== h.version) {
+      this.huntGoal = h.pos.clone();
+      this.huntVersion = h.version;
+      this.huntLookAt = null;
+      this.huntGoalTime = this.stateTime;
+    }
+    if (this.huntLookAt === null) {
+      const there = this.moveTo(this.huntGoal, HUNT_RUN, dt, boxes, level, 0.8);
+      if (there || this.stateTime - this.huntGoalTime > 15) this.huntLookAt = this.stateTime;
+      return;
+    }
+    this.yaw = wrapAngle(this.yaw + Math.sin((this.stateTime - this.huntLookAt) * 1.8) * 1.6 * dt);
+    if (this.stateTime - this.huntLookAt < HUNT_LOOK) return;
+    // Next search spot: the nearest nav node around the last known position nobody has searched lately.
+    let best = -1;
+    let bestD = Infinity;
+    level.navNodes.forEach((n, i) => {
+      if (Math.hypot(n.x - h.pos.x, n.z - h.pos.z) > SEARCH_R) return;
+      if (h.searched.has(i) && this.squad.time - h.searched.get(i) < 25) return;
+      const dd = Math.hypot(n.x - this.pos.x, n.z - this.pos.z);
+      if (dd < bestD) { bestD = dd; best = i; }
+    });
+    if (best < 0) { h.searched.clear(); this.huntLookAt = this.stateTime; return; }
+    h.searched.set(best, this.squad.time);
+    this.huntGoal = level.navNodes[best].clone();
+    this.huntLookAt = null;
+    this.huntGoalTime = this.stateTime;
+  }
+
+  /** One shot at the player. Hits come from an accumulator so results are repeatable; chance is a guess. */
+  shoot(player, d) {
+    const chance = clamp(1 - d / 16, 0.25, 0.85) * (0.5 + 0.5 * Math.min(1, this.visibility * 1.5));
+    this.accuracy += chance;
+    const hit = this.accuracy >= 1;
+    if (hit) this.accuracy -= 1;
+    const from = new THREE.Vector3(this.pos.x - Math.sin(this.yaw) * 0.4, 1.35, this.pos.z - Math.cos(this.yaw) * 0.4);
+    const to = new THREE.Vector3(player.pos.x, player.pos.y + 1.2, player.pos.z);
+    if (!hit) { to.x += (this.accuracy - 0.5) * 1.2; to.y += 0.5; } // a near miss
+    this.squad.shots.push({ from, to, hit, guard: this, noise: GUN_NOISE });
   }
 
   updateDisabled(dt) {
@@ -468,7 +724,7 @@ export class Guard {
     const moved = !this.pathTarget || Math.hypot(target.x - this.pathTarget.x, target.z - this.pathTarget.z) > 0.75;
     this.replanIn = (this.replanIn ?? 0) - dt;
     if (!this.path || moved || this.replanIn <= 0) {
-      this.path = findPath(this.pos, target, level.navNodes, boxes);
+      this.path = findPath(this.pos, target, level.navNodes, level.navBoxes || boxes); // guards open doors on the way
       this.pathTarget = new THREE.Vector3(target.x, 0, target.z);
       this.replanIn = 1;
     }

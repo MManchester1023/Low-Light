@@ -3,11 +3,15 @@
 // not how hard the game is: no test asserts tuning numbers like suspicion rates or noise radii.
 // Every test starts from a fresh reset and uses the fixed-step simulation, so results are repeatable.
 // Add a test here for every new feature.
+// Most tests are about one guard, so fresh() takes the other guards out of the level; tests about several
+// guards bring them back with both().
 
 const HIDE = { x: -60, z: -60 }; // far outside the level: no guard can see or hear the player here
 
 export function runTests(game) {
-  const { level, player, guard, bottle, camera, debug: d } = game;
+  const { level, player, guard, guards, squad, bottle, camera, debug: d } = game;
+  const guard2 = guards[1];
+  const door = level.doors[0];
   const results = [];
 
   const hide = () => player.pos.set(HIDE.x, 0, HIDE.z);
@@ -18,7 +22,10 @@ export function runTests(game) {
   function fresh() {
     for (const k of ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyG', 'ShiftLeft', 'Space']) d.release(k);
     d.reset();
+    for (const g of guards.slice(1)) g.setActive(false);
   }
+  const both = () => { for (const g of guards) g.setActive(true); };
+  const yawTo = (from, to) => Math.atan2(-(to.x - from.x), -(to.z - from.z));
 
   function check(cond, msg) {
     if (!cond) throw new Error(msg);
@@ -62,6 +69,10 @@ export function runTests(game) {
     game.mag = 0;
     game.pistolDrawn = true;
     level.breakLight(level.lights[0]);
+    level.setDoor(door, true, 'player');
+    guard.joinHunt();
+    guard.raiseAlert({ x: 0, z: 0 });
+    game.health = 0.3;
     d.reset();
     const s = level.playerStart;
     check(near(player.pos, s, 0.01), `player at (${player.pos.x.toFixed(1)}, ${player.pos.z.toFixed(1)}), not the start`);
@@ -74,6 +85,10 @@ export function runTests(game) {
     check(game.mag > 0 && !game.killed && !game.pistolDrawn, 'pistol not reset');
     check(level.lights.every((l) => !l.broken), 'a shot-out light is still broken');
     check(level.glass.length === 0 && !level.onGlass(level.lights[0].pos.x, level.lights[0].pos.z), 'broken glass still on the floor');
+    check(!door.open && level.boxes.includes(door.box), 'door not closed again');
+    check(!squad.alerted && !squad.hunt.active, 'full alert not cleared');
+    check(guards.length >= 2 && guards.every((g) => g.active && g.state === 'patrol'), 'not every guard back on patrol');
+    check(game.health === 1, `health ${game.health}`);
   });
 
   test('Player starts inside the level and can walk', () => {
@@ -125,13 +140,17 @@ export function runTests(game) {
     check(groupOn('B'), `lights B still off after 45 s (guard ${guard.state})`);
   });
 
-  test('Guard spots a player standing in front of him', () => {
+  test('Guard spots a player standing in front of him: full alert, not game over', () => {
     // He starts paused at his first waypoint facing -z.
     d.simulate(1 / 60);
     const fx = guard.pos.x - Math.sin(guard.yaw) * 2;
     const fz = guard.pos.z - Math.cos(guard.yaw) * 2;
-    d.simulate(4, () => place(fx, fz));
-    check(game.state === 'spotted', `not spotted (suspicion ${guard.suspicion.toFixed(0)})`);
+    let alertAt = -1;
+    d.simulate(4, (t) => { place(fx, fz); if (alertAt < 0 && squad.hunt.active) alertAt = t; });
+    check(alertAt >= 0 && squad.alerted, `no full alert (suspicion ${guard.suspicion.toFixed(0)})`);
+    check(guard.state === 'hunt' && guard.icon === '!', `guard ${guard.state}`);
+    check(game.state === 'playing', `game state ${game.state}: being seen should not end the level`);
+    check(document.getElementById('alert').textContent.includes('ALERT'), 'no full alert banner');
   });
 
   test('Guard hears footsteps behind him and turns to check', () => {
@@ -206,6 +225,212 @@ export function runTests(game) {
     throwFrom(-10, 7, Math.PI / 2, 0); // into the west wall by the start
     check(game.impact, 'bottle never landed');
     check(!game.impactHeard && guard.state === 'patrol', 'guard heard a far-off smash');
+  });
+
+  // ---------- Second guard ----------
+  test('Level has a second guard who patrols the west room', () => {
+    both();
+    check(guards.length >= 2 && guard2.active, 'no second guard');
+    const start = guard2.pos.clone();
+    check(start.x < 2, 'second guard does not start in the west room');
+    hide();
+    let moved = 0;
+    d.simulate(12, () => { hide(); moved = Math.max(moved, Math.hypot(guard2.pos.x - start.x, guard2.pos.z - start.z)); });
+    check(moved > 3, `second guard only moved ${moved.toFixed(1)} m`);
+    check(guard2.state === 'patrol' && guard.state === 'patrol', `guards ${guard.state} / ${guard2.state}`);
+    check(document.querySelectorAll('.guardTag').length >= 2, 'only one guard tag on the HUD');
+  });
+
+  test('Second guard can be shot and taken down too', () => {
+    both();
+    d.simulate(1 / 60);
+    // grab from behind
+    place(guard2.pos.x + Math.sin(guard2.yaw) * 1, guard2.pos.z + Math.cos(guard2.yaw) * 1);
+    d.simulate(0.05);
+    check(game.takedown === 'grab' && game.takedownGuard === guard2, `no grab prompt on guard 2 (${game.takedown})`);
+    d.press('KeyE');
+    d.simulate(0.1);
+    d.press('KeyE');
+    d.simulate(4);
+    check(guard2.state === 'down' && guard.state !== 'down', `guards ${guard.state} / ${guard2.state}`);
+  });
+
+  // ---------- Full alert ----------
+  test('Full alert: the guard who spots you radios the other, who joins the hunt', () => {
+    both();
+    d.simulate(1 / 60);
+    const fx = guard.pos.x - Math.sin(guard.yaw) * 2;
+    const fz = guard.pos.z - Math.cos(guard.yaw) * 2;
+    d.simulate(4, () => place(fx, fz));
+    check(guard.state === 'hunt' && guard2.state === 'hunt', `guards ${guard.state} / ${guard2.state}`);
+    check(near(squad.hunt.pos, { x: fx, z: fz }, 1), 'shared position is not where the player was seen');
+  });
+
+  test('Full alert: a guard shoots a player in plain sight; enough hits kill him', () => {
+    d.simulate(1 / 60);
+    const fx = guard.pos.x - Math.sin(guard.yaw) * 2;
+    const fz = guard.pos.z - Math.cos(guard.yaw) * 2;
+    place(fx, fz);
+    guard.joinHunt(); // straight to the full alert: this test is about the shooting
+    guard.raiseAlert(player.pos);
+    let hurt = false;
+    d.simulate(20, () => { if (game.state === 'playing') place(fx, fz); if (game.health < 1) hurt = true; });
+    check(game.guardShots.length > 0, 'guard never fired');
+    check(hurt, 'no shot ever hit');
+    check(game.state === 'killed', `game state ${game.state}, health ${game.health.toFixed(2)}`);
+    check(document.querySelector('#overlay h1').textContent === 'Killed', 'no Killed screen');
+    d.press('KeyR');
+    d.simulate(1 / 60);
+    check(game.state === 'playing' && game.health === 1, 'R did not restart after being killed');
+  });
+
+  test('Full alert: hunters run to the last known position', () => {
+    both();
+    hide();
+    const spot = { x: -3, z: 6.5 };
+    guard.joinHunt();
+    guard.raiseAlert(spot);
+    let c1 = Infinity;
+    let c2 = Infinity;
+    d.simulate(15, () => {
+      hide();
+      c1 = Math.min(c1, Math.hypot(guard.pos.x - spot.x, guard.pos.z - spot.z));
+      c2 = Math.min(c2, Math.hypot(guard2.pos.x - spot.x, guard2.pos.z - spot.z));
+    });
+    check(c1 <= 1.5 && c2 <= 1.5, `closest ${c1.toFixed(1)} m / ${c2.toFixed(1)} m`);
+  });
+
+  test('Full alert ends if nobody finds the player; rating is Cleared', () => {
+    hide();
+    guard.joinHunt();
+    guard.raiseAlert({ x: 6, z: 3 });
+    let ended = -1;
+    d.simulate(90, (t) => { hide(); if (ended < 0 && !squad.hunt.active) ended = t; });
+    check(ended > 0, 'alert never ended');
+    check(guard.state !== 'hunt', `guard still ${guard.state}`);
+    check(guard.memory.some((m) => near(m.pos, { x: 6, z: 3 }, 3)), 'he does not remember where the player was');
+    check(document.getElementById('alert').textContent === '', 'alert banner still up');
+    place(8.6, -6.6);
+    d.simulate(0.05, () => place(8.6, -6.6));
+    d.press('KeyE');
+    d.simulate(0.05);
+    check(game.state === 'complete', `game state ${game.state}`);
+    check(document.querySelector('#overlay .msg').textContent.includes('Cleared'), 'rating is not Cleared after a full alert');
+  });
+
+  test('Full alert: a grabbed guard breaking free raises it', () => {
+    d.simulate(1 / 60);
+    place(guard.pos.x + Math.sin(guard.yaw) * 1, guard.pos.z + Math.cos(guard.yaw) * 1);
+    d.simulate(0.05);
+    d.press('KeyE');
+    d.simulate(10);
+    check(game.brokeFree && squad.hunt.active && guard.state === 'hunt', `guard ${guard.state}, alert ${squad.hunt.active}`);
+    check(!player.grabbing && game.state === 'playing', 'player still grabbing, or the level ended');
+  });
+
+  // ---------- Doors ----------
+  test('Door: E opens and closes it; closed, it blocks the way and sight', () => {
+    hide();
+    place(1.3, 7);
+    d.simulate(0.05, () => place(1.3, 7));
+    check(game.interact && game.interact.kind === 'door', `no door prompt (${game.interact && game.interact.kind})`);
+    d.press('KeyE');
+    d.simulate(0.05, () => place(1.3, 7));
+    check(door.open && door.openedBy === 'player' && !level.boxes.includes(door.box), 'door did not open');
+    d.press('KeyE');
+    d.simulate(0.05, () => place(1.3, 7));
+    check(!door.open && level.boxes.includes(door.box), 'door did not close');
+    place(1.3, 7);
+    game.cam.yaw = -Math.PI / 2; // facing +x, through the door
+    d.hold('KeyW');
+    d.simulate(1);
+    d.release('KeyW');
+    check(player.pos.x < 2, 'walked through a closed door');
+    guard.pos.set(3.3, 0, 7);
+    guard.yaw = Math.PI / 2; // facing -x, at the door
+    check(!guard.canSee(new (player.pos.constructor)(0.5, 1.1, 7), level.boxes), 'guard sees through a closed door');
+    level.setDoor(door, true, 'player');
+    check(guard.canSee(new (player.pos.constructor)(0.5, 1.1, 7), level.boxes), 'guard cannot see through the open door');
+  });
+
+  test('Door: it will not close on someone standing in it', () => {
+    hide();
+    level.setDoor(door, true, 'player');
+    place(2, 7);
+    check(!level.setDoor(door, false) && door.open, 'door closed on the player');
+    hide();
+    check(level.setDoor(door, false) && !door.open, 'door would not close with the doorway clear');
+  });
+
+  test('Guard opens a closed door on his way and shuts it behind him', () => {
+    hide();
+    guard.pos.set(3.3, 0, 4.5);
+    const spot = { pos: new (player.pos.constructor)(-3, 0, 7), weight: 1, lastChecked: 0 };
+    guard.checkSpot = spot;
+    guard.setState('check');
+    let opened = false;
+    let shut = false;
+    d.simulate(12, () => {
+      hide();
+      if (door.open && door.openedBy === 'guard') opened = true;
+      if (opened && !door.open && guard.pos.x < 1) shut = true;
+    });
+    check(opened, `guard never opened the door (at ${guard.pos.x.toFixed(1)}, ${guard.pos.z.toFixed(1)})`);
+    check(shut, 'guard did not shut the door behind him');
+    check(guard.suspicion < 25, 'guard got suspicious of a door he opened himself');
+  });
+
+  test('Evidence: a guard notices a door left open and goes to shut it', () => {
+    hide();
+    level.setDoor(door, true, 'player');
+    guard.pos.set(5, 0, 2.5);
+    guard.yaw = yawTo(guard.pos, door.center);
+    guard.route = [{ x: 5, z: 2.5, pause: 99, lookYaw: guard.yaw }];
+    guard.wp = 0;
+    guard.pauseTimer = 99;
+    let reacted = false;
+    try {
+      d.simulate(15, () => {
+        hide();
+        if (guard.state === 'suspicious' || guard.state === 'investigate') reacted = true;
+      });
+    } finally {
+      guard.route = level.guardRoutes[0];
+    }
+    check(reacted, `guard did not react to the open door (${guard.state}, suspicion ${guard.suspicion.toFixed(0)})`);
+    check(!door.open, 'guard left the door open');
+  });
+
+  test('Evidence: a guard finds a knocked-out guard and goes to the body', () => {
+    both();
+    d.simulate(1 / 60, hide); // guard 1 paused at his first waypoint, facing the north wall
+    hide();
+    guard2.pos.set(guard.pos.x - Math.sin(guard.yaw) * 2, 0, guard.pos.z - Math.cos(guard.yaw) * 2);
+    guard2.dropKnockOut();
+    let reacted = false;
+    d.simulate(4, () => { hide(); if (guard.state === 'suspicious' || guard.state === 'investigate') reacted = true; });
+    check(guard.knownBodies.has(guard2), 'body not noticed');
+    check(reacted, `guard did not react (${guard.state})`);
+    check(!squad.hunt.active, 'a body alone raised the full alert');
+  });
+
+  test('Evidence: a body in the dark is not seen from far off', () => {
+    both();
+    hide();
+    for (const g of ['A', 'B', 'lamp']) level.setGroup(g, false);
+    guard.pos.set(6, 0, 6);
+    guard.yaw = 0; // facing north up the east room
+    guard2.pos.set(6, 0, -1);
+    guard2.dropKnockOut();
+    d.simulate(1, () => { guard2.pos.set(6, 0, -1); });
+    guard.knownBodies.clear();
+    guard.pos.set(6, 0, 6);
+    guard.yaw = 0;
+    guard.checkBodies(level);
+    check(!guard.knownBodies.has(guard2), 'saw a body 7 m away in the dark');
+    for (const g of ['A', 'B', 'lamp']) level.setGroup(g, true);
+    guard.checkBodies(level);
+    check(guard.knownBodies.has(guard2), 'did not see the same body with the lights on');
   });
 
   test('Guard memory: he goes back to check a spot later', () => {

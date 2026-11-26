@@ -11,17 +11,24 @@ export class Hud {
     this.nvEl = document.getElementById('nv');
     this.heldEl = document.getElementById('held');
     this.promptEl = document.getElementById('prompt');
-    this.tag = document.getElementById('guardTag');
-    this.tagIcon = this.tag.querySelector('.icon');
-    this.tagBar = this.tag.querySelector('.bar');
-    this.tagFill = this.tag.querySelector('.bar .fill');
+    this.tagTemplate = document.getElementById('guardTag'); // one tag per guard, cloned from this
+    this.tags = [];
+    this.healthEl = document.getElementById('health');
+    this.alertEl = document.getElementById('alert');
+    this.hurtEl = document.getElementById('hurt');
     this.overlay = document.getElementById('overlay');
     this.overlayH1 = this.overlay.querySelector('h1');
     this.overlayMsg = this.overlay.querySelector('.msg');
     this.overlaySmall = this.overlay.querySelector('.small');
   }
 
-  update({ light = 0, stance = '', prompt = '', guard = null, noise = 0, nv = false, held = '' } = {}) {
+  update({ light = 0, stance = '', prompt = '', guards = [], noise = 0, nv = false, held = '',
+    health = 1, alert = '', hurt = 0 } = {}) {
+    const hp = `HEALTH ${Math.round(Math.max(0, health) * 100)}`;
+    if (this.healthEl.textContent !== hp) this.healthEl.textContent = hp;
+    this.healthEl.classList.toggle('low', health < 0.5);
+    if (this.alertEl.textContent !== alert) this.alertEl.textContent = alert;
+    this.hurtEl.style.opacity = Math.max(0, Math.min(1, hurt)).toFixed(2);
     if (this.heldEl.textContent !== held) this.heldEl.textContent = held;
     const nz = Math.max(0, Math.min(1, noise));
     this.noiseFill.style.width = (nz * 100).toFixed(1) + '%';
@@ -37,11 +44,18 @@ export class Hud {
     this.meterFill.style.background = `rgb(${r},${g},${b})`;
     if (this.stanceEl.textContent !== stance) this.stanceEl.textContent = stance;
     if (this.promptEl.textContent !== prompt) this.promptEl.textContent = prompt;
-    this._guard(guard);
+    while (this.tags.length < guards.length) {
+      const el = this.tags.length ? this.tagTemplate.cloneNode(true) : this.tagTemplate;
+      el.removeAttribute('id');
+      el.classList.add('guardTag');
+      if (el !== this.tagTemplate) this.tagTemplate.parentNode.appendChild(el);
+      this.tags.push({ el, icon: el.querySelector('.icon'), bar: el.querySelector('.bar'), fill: el.querySelector('.bar .fill') });
+    }
+    this.tags.forEach((t, i) => this._guard(t, guards[i]));
   }
 
-  _guard(guard) {
-    const tag = this.tag;
+  _guard(el, guard) {
+    const tag = el.el;
     if (!guard || !guard.pos || guard.hidden) { tag.style.display = 'none'; return; }
     _v.copy(guard.pos).project(this.camera);
     if (_v.z > 1 || _v.x < -1 || _v.x > 1 || _v.y < -1 || _v.y > 1) { tag.style.display = 'none'; return; }
@@ -52,27 +66,27 @@ export class Hud {
 
     const s = guard.suspicion || 0;
     const icon = guard.icon || '';
-    if (this.tagIcon.textContent !== icon) this.tagIcon.textContent = icon;
-    this.tagIcon.style.color = icon === '!' ? '#e8412f' : '#f0d040';
+    if (el.icon.textContent !== icon) el.icon.textContent = icon;
+    el.icon.style.color = icon === '!' ? '#e8412f' : '#f0d040';
     if (Number.isFinite(guard.grip)) {
       // grip mode: bar always shown, width = grip, red (about to break free) -> pale blue-white (plenty of time)
       const gr = Math.max(0, Math.min(1, guard.grip));
       tag.classList.add('grip');
-      this.tagBar.style.visibility = 'visible';
-      this.tagFill.style.width = (gr * 100).toFixed(1) + '%';
+      el.bar.style.visibility = 'visible';
+      el.fill.style.width = (gr * 100).toFixed(1) + '%';
       const r = Math.round(232 + (220 - 232) * gr);
       const g = Math.round(65 + (235 - 65) * gr);
       const b = Math.round(47 + (255 - 47) * gr);
-      this.tagFill.style.background = `rgb(${r},${g},${b})`;
+      el.fill.style.background = `rgb(${r},${g},${b})`;
     } else if (s < 0.5) {
       tag.classList.remove('grip');
-      this.tagBar.style.visibility = 'hidden';
+      el.bar.style.visibility = 'hidden';
     } else {
       tag.classList.remove('grip');
-      this.tagBar.style.visibility = 'visible';
+      el.bar.style.visibility = 'visible';
       const t = Math.max(0, Math.min(1, s / 100));
-      this.tagFill.style.width = (t * 100).toFixed(1) + '%';
-      this.tagFill.style.background = `rgb(${Math.round(240 - 10 * t)},${Math.round(208 - 150 * t)},${Math.round(64 - 20 * t)})`;
+      el.fill.style.width = (t * 100).toFixed(1) + '%';
+      el.fill.style.background = `rgb(${Math.round(240 - 10 * t)},${Math.round(208 - 150 * t)},${Math.round(64 - 20 * t)})`;
     }
   }
 

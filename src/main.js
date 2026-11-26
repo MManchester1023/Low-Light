@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { buildLevel } from './level.js';
 import { Player, MAX_NOISE } from './player.js';
 import { NightVision } from './nightvision.js';
-import { Guard, KO_TIME } from './guard.js';
+import { Guard, makeSquad, resetSquad, updateSquad } from './guard.js';
 import { lightAt } from './lighting.js';
 import { Bottle, THROW_NOISE, throwVelocity, predictArc } from './throwable.js';
 import { Hud } from './hud.js';
@@ -39,7 +39,12 @@ for (const pipe of level.pipes) {
 const pipeDown = { kind: 'pipeDown', label: () => 'E: climb down', use: () => player.climbDown() };
 const DROP_NOISE = 6; // m: letting go of a pipe lands hard (design doc: loud landing; radius is a guess)
 const DROP_KO_RANGE = 0.9; // m: land this close to a guard and he goes down (design doc: drop attack; guess)
-const guard = new Guard(scene, level.guardRoute);
+// Guards share one squad: a full alert spreads to all of them (guard.js).
+const squad = makeSquad();
+const guards = level.guardRoutes.map((route) => new Guard(scene, route, squad));
+const guard = guards[0]; // older code and tests talk about "the guard": the east room one
+level.occupants = () => [player.pos, ...guards.filter((g) => g.active).map((g) => g.pos)]; // keep doors from closing on anyone
+const GUARD_DAMAGE = 0.34; // share of the player's health one guard bullet takes: three hits and you're down (guess)
 const hud = new Hud(camera);
 const input = new Input(canvas);
 const nv = new NightVision(renderer);
@@ -82,6 +87,18 @@ const tracer = new THREE.Line(
 tracer.frustumCulled = false;
 tracer.visible = false;
 scene.add(tracer);
+// One tracer per guard for their shots during a full alert.
+const guardTracers = guards.map(() => {
+  const line = new THREE.Line(
+    new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3)),
+    new THREE.LineBasicMaterial({ color: 0xffb070, transparent: true, opacity: 0.8, depthWrite: false })
+  );
+  line.frustumCulled = false;
+  line.visible = false;
+  line.userData.t = -1;
+  scene.add(line);
+  return line;
+});
 const crosshairEl = document.getElementById('crosshair');
 
 // Debug noise ring around the player (shown with V, like the guard view cone).
@@ -102,11 +119,11 @@ const KEY_LOOK = 2.2; // rad/s for arrow-key look
 const GLASS_MUL = 2.5; // footsteps on broken glass carry this much further (guess)
 
 const game = {
-  state: 'playing', // 'playing' | 'spotted' | 'complete'
+  state: 'playing', // 'playing' | 'killed' | 'complete'
   time: 0,
   maxSuspicion: 0,
   cam: { yaw: 0, pitch: -0.2 },
-  level, player, guard, camera, nv, bottle, input,
+  level, player, guard, guards, squad, camera, nv, bottle, input,
   noise: { pos: new THREE.Vector3(), radius: 0 },
   interact: null,
 };
@@ -115,7 +132,9 @@ window.game = game; // for scripted checks
 function reset() {
   level.reset();
   player.reset(level.playerStart);
-  guard.reset();
+  for (const g of guards) g.reset();
+  resetSquad(squad);
+  for (const t of guardTracers) { t.visible = false; t.userData.t = -1; }
   game.cam.yaw = level.playerStart.yaw;
   game.cam.pitch = -0.2;
   game.state = 'playing';
@@ -137,6 +156,12 @@ function reset() {
   game.lastShot = null;   // { kind, point, t, heard }
   game.killed = false;    // a guard was shot (rating: Cleared)
   game.camDist = CAM_DIST;
+  game.health = 1;        // 0..1; guard bullets take GUARD_DAMAGE each
+  game.hurt = 0;          // red screen flash after a hit, fades out
+  game.held = null;       // the guard being grabbed or knocked out
+  game.brokeFree = false; // a grabbed guard got loose (raises the full alert)
+  game.takedownGuard = null;
+  game.guardShots = [];   // guard gunshots this run: { hit, t }
   bottle.reset();
   nv.enabled = false;
   closeMenu();
@@ -165,23 +190,29 @@ function fmtTime(t) {
 function K(id) { return input.keyFor(id); }
 function moveKeys() { return ['forward', 'left', 'back', 'right'].map(K).join(''); }
 
-function onSpotted() {
-  game.state = 'spotted';
+function onKilled() {
+  game.state = 'killed';
   player.grabbing = false;
   player.locked = false;
-  const why = guard.brokeFree ? 'The guard broke free of your grip.' : 'The guard saw you.';
-  hud.showOverlay('Spotted', why, `Press ${K('reload')} to restart`);
+  hud.showOverlay('Killed', 'The guards shot you during the full alert.', `Press ${K('reload')} to restart`);
 }
 
 function onComplete() {
   game.state = 'complete';
-  // Being spotted ends the run: Ghost (no guard touched), Shadow (non-lethal only) or Cleared (a kill).
-  const rating = game.killed ? 'Cleared' : game.touched ? 'Shadow' : 'Ghost';
+  // Ghost (no guard touched, no full alert), Shadow (non-lethal only, no full alert) or Cleared (anything else).
+  const rating = game.killed || squad.alerted ? 'Cleared' : game.touched ? 'Shadow' : 'Ghost';
   hud.showOverlay(
     'Objective complete',
     `Rating: ${rating} · Time ${fmtTime(game.time)}`,
-    `Guard's highest suspicion: ${Math.round(game.maxSuspicion)}% · Press ${K('reload')} to play again`
+    `${squad.alerted ? 'Full alert reached · ' : ''}Highest guard suspicion: ${Math.round(game.maxSuspicion)}% · Press ${K('reload')} to play again`
   );
+}
+
+/** A one-off noise every guard gets a chance to hear. True if any of them did. */
+function hearAll(pos, radius) {
+  let heard = false;
+  for (const g of guards) heard = g.hearImpact(pos, radius, level.boxes) || heard;
+  return heard;
 }
 
 // ---------- Throwing ----------
@@ -203,7 +234,7 @@ function updateThrow(dt, inp) {
   const hit = bottle.update(dt, level.boxes);
   if (hit) {
     game.impact = { pos: hit.clone(), radius: THROW_NOISE, t: game.time };
-    game.impactHeard = guard.hearImpact(hit, THROW_NOISE, level.boxes);
+    game.impactHeard = hearAll(hit, THROW_NOISE);
   }
 }
 
@@ -235,20 +266,20 @@ function updatePistol(dt, inp) {
   game.mag--;
   updateCamera(); // shoot from where the crosshair is this step
   const dir = cameraDir();
-  const hit = traceShot(camera.position.clone(), dir, level, guard);
+  const hit = traceShot(camera.position.clone(), dir, level, guards);
   hit.point.addScaledVector(dir, -0.05); // just off the surface, so the wall it hit does not muffle it
-  let heard = guard.hearImpact(player.pos, SHOT_NOISE, level.boxes);
   if (hit.kind === 'guard') {
-    if (guard.state === 'grabbed' || guard.state === 'ko') releaseGuard();
-    guard.kill();
+    if (game.held === hit.guard) { releaseGuard(); game.held = null; }
+    hit.guard.kill();
     game.killed = true;
     game.touched = true;
-    heard = false;
-  } else if (hit.kind === 'light') {
+  }
+  let heard = hearAll(player.pos, SHOT_NOISE);
+  if (hit.kind === 'light') {
     level.breakLight(hit.light);
   }
   if (hit.kind !== 'miss' && hit.kind !== 'guard') {
-    heard = guard.hearImpact(hit.point, IMPACT_NOISE, level.boxes) || heard;
+    heard = hearAll(hit.point, IMPACT_NOISE) || heard;
     game.impact = { pos: hit.point.clone(), radius: IMPACT_NOISE, t: game.time };
   }
   game.lastShot = { kind: hit.kind, point: hit.point, t: game.time, heard };
@@ -258,11 +289,26 @@ function updatePistol(dt, inp) {
   tracer.geometry.attributes.position.needsUpdate = true;
 }
 
+// ---------- Guard gunfire (full alert) ----------
+function handleGuardShots() {
+  for (const shot of squad.shots) {
+    const line = guardTracers[guards.indexOf(shot.guard)];
+    line.geometry.attributes.position.array.set([shot.from.x, shot.from.y, shot.from.z, shot.to.x, shot.to.y, shot.to.z]);
+    line.geometry.attributes.position.needsUpdate = true;
+    line.userData.t = game.time;
+    game.guardShots.push({ hit: shot.hit, t: game.time });
+    if (shot.hit) { game.health = Math.max(0, game.health - GUARD_DAMAGE); game.hurt = 1; }
+    hearAll(shot.from, shot.noise); // the others hear it (and come running if hunting)
+  }
+  squad.shots.length = 0;
+}
+
 // ---------- Takedowns ----------
 const HOLD_DIST = 0.6;  // guard held this far in front of the player
 const KO_NOISE = 1.5;   // m: a knockout is quiet but not silent (guess)
 
-function grabGuard() {
+function grabGuard(guard) {
+  game.held = guard;
   guard.grab();
   game.touched = true;
   player.grabbing = true;
@@ -274,7 +320,8 @@ function grabGuard() {
 }
 
 function holdGuard() {
-  if (guard.state !== 'grabbed' && guard.state !== 'ko') return;
+  const guard = game.held;
+  if (!guard || (guard.state !== 'grabbed' && guard.state !== 'ko')) return;
   const fx = -Math.sin(player.facing);
   const fz = -Math.cos(player.facing);
   guard.pos.set(player.pos.x + fx * HOLD_DIST, 0, player.pos.z + fz * HOLD_DIST);
@@ -288,7 +335,7 @@ function holdGuard() {
 }
 
 function knockOutGuard() {
-  guard.knockOut();
+  game.held.knockOut();
   player.grabbing = false;
   player.locked = true;
 }
@@ -309,10 +356,10 @@ function step(dt, inp) {
     player.update(dt, inp, game.cam.yaw, level.boxes);
     if (player.landed) {
       game.impact = { pos: player.pos.clone(), radius: DROP_NOISE, t: game.time };
-      const onGuard = !guard.disabled && guard.state !== 'alert'
-        && Math.hypot(guard.pos.x - player.pos.x, guard.pos.z - player.pos.z) <= DROP_KO_RANGE;
-      if (onGuard) { guard.dropKnockOut(); game.touched = true; game.dropKO = true; }
-      game.dropHeard = guard.hearImpact(player.pos, DROP_NOISE, level.boxes);
+      const under = guards.find((g) => g.active && !g.disabled
+        && Math.hypot(g.pos.x - player.pos.x, g.pos.z - player.pos.z) <= DROP_KO_RANGE);
+      if (under) { under.dropKnockOut(); game.touched = true; game.dropKO = true; }
+      game.dropHeard = hearAll(player.pos, DROP_NOISE);
     }
 
     const samples = player.samplePoints();
@@ -324,37 +371,50 @@ function step(dt, inp) {
     updatePistol(dt, inp);
     game.onGlass = !player.climb && level.onGlass(player.pos.x, player.pos.z);
     game.noise = { pos: player.pos.clone(), radius: player.locked ? KO_NOISE : player.noiseRadius * (game.onGlass ? GLASS_MUL : 1) };
-    guard.update(dt, player, samples, sampleLight, level, game.noise);
-    if (player.locked && guard.state === 'down') player.locked = false; // knockout finished
-    game.maxSuspicion = Math.max(game.maxSuspicion, guard.suspicion);
+    updateSquad(squad, dt);
+    for (const g of guards) g.update(dt, player, samples, sampleLight, level, game.noise);
+    if (game.held && game.held.state === 'down') { player.locked = false; game.held = null; } // knockout finished
+    for (const g of guards) if (g.active) game.maxSuspicion = Math.max(game.maxSuspicion, g.suspicion);
     game.time += dt;
+    handleGuardShots();
 
     // One context button: takedown moves win over switches when a guard is in reach.
     game.interact = null;
     game.takedown = null;
-    if (guard.state === 'grabbed') {
+    game.takedownGuard = null;
+    const reachable = !player.locked && !player.climb && !game.held ? guards.find((g) => g.canTakedown(player)) : null;
+    if (game.held && game.held.state === 'grabbed') {
       game.takedown = 'knockout';
-      if (guard.grip <= 0) { guard.brokeFree = true; releaseGuard(); guard.breakFree(); }
+      if (game.held.grip <= 0) {
+        const g = game.held;
+        game.brokeFree = true;
+        releaseGuard();
+        game.held = null;
+        game.takedown = null;
+        g.breakFree(player.pos);
+      }
     } else if (player.climb) {
       game.interact = player.atPipeEnd ? pipeDown : null;
-    } else if (!player.locked && guard.canTakedown(player)) {
+    } else if (reachable) {
       game.takedown = 'grab';
+      game.takedownGuard = reachable;
     } else if (!player.locked) {
       game.interact = nearestInteractable();
     }
     if (inp.pressed('KeyE')) {
-      if (game.takedown === 'grab') grabGuard();
+      if (game.takedown === 'grab') grabGuard(game.takedownGuard);
       else if (game.takedown === 'knockout') knockOutGuard();
       else if (game.interact) {
         game.interact.use();
         if (game.interact.kind === 'objective') onComplete();
       }
     }
-    if (guard.suspicion >= 100) onSpotted();
+    if (game.health <= 0 && game.state === 'playing') onKilled();
   }
+  game.hurt = Math.max(0, game.hurt - dt * 1.5);
   if (game.state !== 'playing') { game.aiming = false; game.pistolAim = false; player.aiming = false; }
   if (game.state !== 'playing' && inp.pressed('KeyR')) reset(); // during play R reloads
-  if (inp.pressed('KeyV')) { guard.toggleCone(); showDebug = !showDebug; }
+  if (inp.pressed('KeyV')) { for (const g of guards) g.toggleCone(); showDebug = !showDebug; }
   if (inp.pressed('KeyN')) nv.toggle();
 }
 
@@ -406,13 +466,16 @@ function updateHud() {
       : player.climb && player.climb.mode === 'riser' ? `${K('forward')} climb · ${K('back')} down · ${K('crouch')} drop`
       : player.climb ? ''
       : game.interact ? game.interact.label().replace(/^E:/, `${K('use')}:`) : '',
-    guard: {
-      pos: new THREE.Vector3(guard.pos.x, 2.15, guard.pos.z),
-      suspicion: guard.suspicion,
-      icon: guard.icon,
-      grip: guard.state === 'grabbed' ? guard.grip : null,
-      hidden: guard.state === 'ko' || guard.state === 'down' || guard.state === 'dead',
-    },
+    health: game.health,
+    hurt: game.hurt,
+    alert: squad.hunt.active ? 'FULL ALERT · THEY ARE HUNTING YOU' : '',
+    guards: guards.map((g) => ({
+      pos: new THREE.Vector3(g.pos.x, 2.15, g.pos.z),
+      suspicion: g.suspicion,
+      icon: g.icon,
+      grip: g.state === 'grabbed' ? g.grip : null,
+      hidden: !g.active || g.state === 'ko' || g.state === 'down' || g.state === 'dead',
+    })),
   });
 }
 
@@ -523,6 +586,7 @@ function frame(now) {
   updateAim();
   game.camDist = lerp(game.camDist, game.pistolAim ? AIM_DIST : CAM_DIST, 1 - Math.exp(-12 * dt));
   tracer.visible = !!game.lastShot && game.time - game.lastShot.t < 0.06;
+  for (const t of guardTracers) t.visible = t.userData.t >= 0 && game.time - t.userData.t < 0.08;
   nv.render(scene, camera, dt);
   requestAnimationFrame(frame);
 }
