@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { Pipe } from './pipe.js';
 
 // Builds the single-room level: geometry, lights, switches, objective, guard route.
 export function buildLevel(scene) {
@@ -60,6 +61,11 @@ export function buildLevel(scene) {
   box(-1, 4, 0.8, 4, 0.8, wallMat); // pillar
   box(4.5, 7, 1, 2.2, 3, shelfMat); // shelf
   box(9, -7.4, 2.2, 0.8, 1, deskMat); // desk
+
+  // ---------- Ceiling pipe ----------
+  // Riser by the west wall, along the ceiling over the middle doorway (the guard's route), then north and
+  // east along the north wall to a riser behind the desk. Not solid: it never blocks sight or movement.
+  const pipes = [new Pipe(scene, [[-11.6, -2.6], [3.5, -2.6], [3.5, -8.5], [7.6, -8.5]])];
 
   // ---------- Objective files (not solid) ----------
   const filesMat = mat(0xd8d0b8, 0.8, { emissive: 0xffb060, emissiveIntensity: 0.6 });
@@ -235,6 +241,7 @@ export function buildLevel(scene) {
     playerStart: { x: -10, z: 7, yaw: -Math.PI / 3 },
     guardRoute,
     navNodes,
+    pipes,
     switchFor,
     setGroup,
     reset,

@@ -25,6 +25,18 @@ const camera = new THREE.PerspectiveCamera(65, 1, 0.05, 100);
 
 const level = buildLevel(scene);
 const player = new Player(scene);
+for (const pipe of level.pipes) {
+  for (const m of pipe.mounts()) {
+    level.interactables.push({
+      kind: 'pipe', pipe, pos: m.pos, range: 1.0,
+      label: () => 'E: climb pipe',
+      use: () => player.startClimb(pipe, m.s),
+    });
+  }
+}
+// While hanging at a pipe end, E climbs back down.
+const pipeDown = { kind: 'pipeDown', label: () => 'E: climb down', use: () => player.climbDown() };
+const DROP_NOISE = 6; // m: letting go of a pipe lands hard (design doc: loud landing; radius is a guess)
 const guard = new Guard(scene, level.guardRoute);
 const hud = new Hud(camera);
 const input = new Input(canvas);
@@ -95,7 +107,8 @@ function reset() {
   game.noise = { pos: new THREE.Vector3(), radius: 0 };
   game.holding = null;   // 'bottle' while carrying it
   game.aiming = false;   // G held with something to throw
-  game.impact = null;    // { pos, radius, t } last smash, for the V debug ring
+  game.impact = null;    // { pos, radius, t } last smash or hard landing, for the V debug ring
+  game.dropHeard = false;
   bottle.reset();
   nv.enabled = false;
   if (input.active) hud.hideOverlay();
@@ -145,7 +158,7 @@ function throwOrigin() {
 }
 
 function updateThrow(dt, inp) {
-  const canThrow = game.holding && !player.grabbing && !player.locked;
+  const canThrow = game.holding && !player.grabbing && !player.locked && !player.climb;
   const gDown = inp.down('KeyG');
   if (canThrow && gDown) game.aiming = true;
   else if (game.aiming && canThrow && !gDown) {
@@ -210,6 +223,10 @@ function step(dt, inp) {
     game.cam.pitch = clamp(game.cam.pitch - inp.mouseDY * SENS + keyPitch * KEY_LOOK * 0.6 * dt, -1.1, 0.6);
 
     player.update(dt, inp, game.cam.yaw, level.boxes);
+    if (player.landed) {
+      game.impact = { pos: player.pos.clone(), radius: DROP_NOISE, t: game.time };
+      game.dropHeard = guard.hearImpact(player.pos, DROP_NOISE, level.boxes);
+    }
 
     const samples = player.samplePoints();
     const sampleLight = samples.map((p) => lightAt(p, level));
@@ -229,6 +246,8 @@ function step(dt, inp) {
     if (guard.state === 'grabbed') {
       game.takedown = 'knockout';
       if (guard.grip <= 0) { guard.brokeFree = true; releaseGuard(); guard.breakFree(); }
+    } else if (player.climb) {
+      game.interact = player.atPipeEnd ? pipeDown : null;
     } else if (!player.locked && guard.canTakedown(player)) {
       game.takedown = 'grab';
     } else if (!player.locked) {
@@ -258,7 +277,7 @@ function updateCamera() {
     -Math.cos(yaw) * Math.cos(pitch)
   );
   const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
-  const pivot = new THREE.Vector3(player.pos.x, player.eyeHeight, player.pos.z);
+  const pivot = new THREE.Vector3(player.pos.x, player.viewHeight, player.pos.z);
 
   // Shoulder offset, pulled in if a wall is right beside the player.
   const shoulderGoal = pivot.clone().addScaledVector(right, SHOULDER);
@@ -285,6 +304,8 @@ function updateHud() {
       : game.takedown === 'grab' ? 'E: grab'
       : game.takedown === 'knockout' ? 'E: knock out · WASD drag him'
       : player.locked ? ''
+      : player.hanging ? (game.interact ? 'E: climb down · C: drop' : 'C: drop · WASD shimmy')
+      : player.climb ? ''
       : game.interact ? game.interact.label() : '',
     guard: {
       pos: new THREE.Vector3(guard.pos.x, 2.15, guard.pos.z),

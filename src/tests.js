@@ -58,7 +58,7 @@ export function runTests(game) {
     bottle.pickUp();
     game.holding = 'bottle';
     guard.remember({ x: 0, z: 0 }, 'sound');
-    place(5, 5);
+    player.startClimb(level.pipes[0], 5);
     d.reset();
     const s = level.playerStart;
     check(near(player.pos, s, 0.01), `player at (${player.pos.x.toFixed(1)}, ${player.pos.z.toFixed(1)}), not the start`);
@@ -67,6 +67,7 @@ export function runTests(game) {
     check(bottle.state === 'rest' && !game.holding, 'bottle not back on the crate');
     check(guard.state === 'patrol' && guard.suspicion === 0, `guard ${guard.state} at ${guard.suspicion}`);
     check(guard.memory.length === 0, 'guard memory not cleared');
+    check(!player.climb && player.pos.y === 0, 'player still on the pipe');
   });
 
   test('Player starts inside the level and can walk', () => {
@@ -209,6 +210,65 @@ export function runTests(game) {
     check(checked, 'no check detour within 60 s');
     check(near(guard.memory[0].pos, hit, 3), 'remembered spot is not where the bottle smashed');
     check(game.state === 'playing', `game state ${game.state}`);
+  });
+
+  // ---------- Pipe ----------
+  const pipe = level.pipes[0];
+  /** Hang from the pipe at distance s along it (skips the climb). */
+  function hangAt(s) {
+    player.startClimb(pipe, s);
+    player.climb.mode = 'hang';
+    d.simulate(1 / 60);
+  }
+  const alongPipe = () => { const v = pipe.dirAt(player.climb.s); game.cam.yaw = Math.atan2(-v.x, -v.z); };
+
+  test('Pipe: climb up, shimmy the whole way, climb down the far end', () => {
+    guard.setState('down'); // out of the way: this test is about movement
+    const [a, b] = pipe.mounts();
+    place(a.pos.x, a.pos.z);
+    d.simulate(0.05);
+    check(game.interact && game.interact.kind === 'pipe', 'no climb prompt at the riser');
+    d.press('KeyE');
+    d.simulate(2);
+    check(player.hanging, `not hanging after climbing (stance ${player.stance})`);
+    check(player.viewHeight > 3, 'camera did not go up with the player');
+    d.hold('KeyW');
+    d.simulate(40, () => { if (player.climb) alongPipe(); });
+    d.release('KeyW');
+    check(player.atPipeEnd && near(player.pos, b.pos, 0.1), `stuck at s=${player.climb && player.climb.s.toFixed(1)} of ${pipe.length.toFixed(1)}`);
+    d.simulate(0.05);
+    check(game.interact && game.interact.kind === 'pipeDown', 'no climb-down prompt at the far end');
+    d.press('KeyE');
+    d.simulate(3);
+    check(!player.climb && player.pos.y === 0, `not back on the floor (stance ${player.stance})`);
+    check(near(player.pos, b.pos, 0.5), 'climbed down somewhere other than the far riser');
+  });
+
+  test('Guard does not see a player hanging above and ahead of him', () => {
+    d.simulate(1 / 60); // he starts paused at his first waypoint facing the north wall
+    hangAt(23.5);       // on the pipe along that wall, about 2.5 m in front of him
+    check(player.hanging, 'not hanging');
+    let seen = 0;
+    d.simulate(1.5, () => { seen = Math.max(seen, guard.visibility); });
+    check(seen === 0, `guard saw the player on the pipe (visibility ${seen.toFixed(2)})`);
+    check(game.state === 'playing', `game state ${game.state}`);
+  });
+
+  test('Dropping from the pipe lands with a noise the guard hears', () => {
+    d.simulate(1 / 60);
+    hangAt(23.5);
+    d.press('KeyC');
+    d.simulate(1.5);
+    check(!player.climb && player.pos.y === 0, `still in the air (stance ${player.stance})`);
+    check(game.impact && game.dropHeard, 'guard did not hear the landing');
+    check(guard.state !== 'patrol', `guard still patrolling (${guard.state})`);
+  });
+
+  test('No takedowns or switches from the pipe', () => {
+    hangAt(8); // mid-pipe, away from both ends
+    d.simulate(0.05);
+    check(!game.takedown && !game.interact, `got ${game.takedown || (game.interact && game.interact.kind)} while hanging`);
+    check(document.getElementById('prompt').textContent.includes('C: drop'), 'no drop prompt while hanging');
   });
 
   fresh();

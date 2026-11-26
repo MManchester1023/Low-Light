@@ -34,3 +34,6 @@
 - ✔ v0.5: Guard memory: guards remember spots where they heard a noise, saw the player or found a dead
   light (at its switch), for the rest of the mission. Nearby events stack onto one spot. Every 20 s of patrol
   he detours to the spot most worth checking, looks around for 3.5 s, then carries on. V shows the spots.
+- ✔ v0.6: Ceiling pipe: climb a riser (E), hang legs-up under the ceiling and shimmy along it (WASD), climb
+  down at either end (E) or drop anywhere (C, loud landing the guard can hear). Guards don't look more than 30°
+  above eye level, so a player on the pipe close above or ahead of a guard isn't seen.

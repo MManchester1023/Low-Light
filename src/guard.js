@@ -16,6 +16,7 @@ import { clamp, turnToward, wrapAngle, yawFromDir } from './utils.js';
 const EYE_H = 1.65;
 const FOV_HALF = Math.PI / 3;   // 120° cone (design doc)
 const RANGE = 12;               // m
+const LOOK_UP = Math.tan((30 * Math.PI) / 180); // guards don't look up: nothing more than 30° above eye level is seen (guess)
 const FILL = 80;                // points/s at full visibility, point blank
 const NOISE_FILL = 60;          // points/s when a noise is right next to the guard
 const NOISE_CAP = 75;           // sound alone never takes suspicion past this
@@ -207,6 +208,7 @@ export class Guard {
       if (d > RANGE) continue;
       const hd = Math.hypot(dx, dz);
       if (hd > 0.01 && (dx * fx + dz * fz) / hd < cosHalf) continue;
+      if (p.y - eye.y > hd * LOOK_UP) continue;
       if (segmentBlocked(eye, p, boxes)) continue;
       // Darkness hides you beyond ~2 m; up close it doesn't.
       const close = clamp((2.5 - d) / 1.0, 0, 1);
