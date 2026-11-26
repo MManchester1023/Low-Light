@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Low Light</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+  </script>
+</head>
+<body>
+  <canvas id="view"></canvas>
+
+  <div id="hud">
+    <div id="help">WASD move · Mouse look · Shift run · C crouch · E use · R restart · V show guard view</div>
+    <div id="objective">Objective: take the files from the desk in the east room</div>
+    <div id="guardTag"><div class="icon"></div><div class="bar"><div class="fill"></div></div></div>
+    <div id="prompt"></div>
+    <div id="meter">
+      <div class="label">LIGHT</div>
+      <div class="track"><div class="fill"></div></div>
+      <div class="stance"></div>
+    </div>
+  </div>
+
+  <div id="overlay">
+    <div class="box">
+      <h1>Low Light</h1>
+      <p class="msg">Click to play</p>
+      <p class="small"></p>
+    </div>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
