@@ -125,6 +125,7 @@ export function buildLevel(scene) {
 
   // Toggle one light without touching `visible` (avoids shader recompiles)
   function setLightOn(l, on) {
+    if (l.broken) on = false; // shot out: no switch brings it back
     l.on = on;
     l.light.intensity = on ? l.baseIntensity : 0;
     l.fixture.material.emissiveIntensity = on ? FIXTURE_ON : 0;
@@ -227,8 +228,15 @@ export function buildLevel(scene) {
 
   const switchFor = (group) => interactables.find((i) => i.kind === 'switch' && i.group === group);
 
+  /** A light shot out with the pistol: off for the rest of the mission. */
+  function breakLight(l) {
+    setLightOn(l, false);
+    l.broken = true;
+    updateLeds();
+  }
+
   function reset() {
-    for (const l of lights) setLightOn(l, true);
+    for (const l of lights) { l.broken = false; setLightOn(l, true); }
     updateLeds();
     files.visible = true;
   }
@@ -244,6 +252,7 @@ export function buildLevel(scene) {
     pipes,
     switchFor,
     setGroup,
+    breakLight,
     reset,
   };
 }

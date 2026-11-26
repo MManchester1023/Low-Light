@@ -120,7 +120,7 @@ export class Guard {
 
   /** Out of action or held: no senses, no patrol. */
   get disabled() {
-    return this.state === 'grabbed' || this.state === 'ko' || this.state === 'down';
+    return this.state === 'grabbed' || this.state === 'ko' || this.state === 'down' || this.state === 'dead';
   }
 
   /** Player close behind an unaware guard. */
@@ -138,6 +138,8 @@ export class Guard {
   knockOut() { this.setState('ko'); this.koTime = 0; }
   /** Landed on from above (dropped from a pipe): straight down, no struggle. */
   dropKnockOut() { this.suspicion = 0; this.setState('down'); this.koTime = 0; }
+  /** Shot: falls and stays down for good. */
+  kill() { this.suspicion = 0; this.setState('dead'); this.koTime = 0; this.rig.rotation.set(0.3, 0, 0); }
   breakFree() { this.rig.rotation.x = 0; this.suspicion = 100; this.setState('alert'); }
 
   toggleCone() {
@@ -258,7 +260,7 @@ export class Guard {
       if (eye.distanceTo(L.pos) > DARK_NOTICE) continue;
       if (segmentBlocked(eye, L.pos, level.boxes)) continue;
       this.knownDark.add(L.id);
-      const sw = level.switchFor(L.group);
+      const sw = L.broken ? null : level.switchFor(L.group); // a shot-out light: remember the light itself
       this.remember(sw ? sw.pos : L.pos, 'light');
     }
   }
@@ -268,7 +270,7 @@ export class Guard {
     let best = null;
     let bestD = Infinity;
     for (const L of level.lights) {
-      if (L.on || !this.knownDark.has(L.id)) continue;
+      if (L.on || L.broken || !this.knownDark.has(L.id)) continue;
       const sw = level.switchFor(L.group);
       if (!sw) continue;
       const d = Math.hypot(sw.pos.x - this.pos.x, sw.pos.z - this.pos.z);
@@ -409,7 +411,7 @@ export class Guard {
       this.rig.rotation.x = 0.3 + Math.sin(this.koTime * 11) * 0.09 * fade;
       this.rig.rotation.z = Math.sin(this.koTime * 8) * 0.12 * fade;
       if (this.koTime >= KO_TIME) { this.setState('down'); this.koTime = 0; }
-    } else if (this.state === 'down') {
+    } else if (this.state === 'down' || this.state === 'dead') {
       // Slump forward onto the floor over ~0.6 s.
       this.koTime += dt;
       const t = Math.min(1, this.koTime / 0.6);

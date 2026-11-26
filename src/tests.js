@@ -7,7 +7,7 @@
 const HIDE = { x: -60, z: -60 }; // far outside the level: no guard can see or hear the player here
 
 export function runTests(game) {
-  const { level, player, guard, bottle, debug: d } = game;
+  const { level, player, guard, bottle, camera, debug: d } = game;
   const results = [];
 
   const hide = () => player.pos.set(HIDE.x, 0, HIDE.z);
@@ -16,7 +16,7 @@ export function runTests(game) {
   const near = (a, b, r) => Math.hypot(a.x - b.x, a.z - b.z) <= r;
 
   function fresh() {
-    for (const k of ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyG', 'ShiftLeft', 'Space']) d.release(k);
+    for (const k of ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyG', 'KeyF', 'ShiftLeft', 'Space']) d.release(k);
     d.reset();
   }
 
@@ -59,6 +59,8 @@ export function runTests(game) {
     game.holding = 'bottle';
     guard.remember({ x: 0, z: 0 }, 'sound');
     player.startClimb(level.pipes[0], 5);
+    game.ammo = 0;
+    level.breakLight(level.lights[0]);
     d.reset();
     const s = level.playerStart;
     check(near(player.pos, s, 0.01), `player at (${player.pos.x.toFixed(1)}, ${player.pos.z.toFixed(1)}), not the start`);
@@ -68,6 +70,8 @@ export function runTests(game) {
     check(guard.state === 'patrol' && guard.suspicion === 0, `guard ${guard.state} at ${guard.suspicion}`);
     check(guard.memory.length === 0, 'guard memory not cleared');
     check(!player.climb && player.pos.y === 0, 'player still on the pipe');
+    check(game.ammo > 0 && !game.killed, 'pistol not reloaded');
+    check(level.lights.every((l) => !l.broken), 'a shot-out light is still broken');
   });
 
   test('Player starts inside the level and can walk', () => {
@@ -305,6 +309,74 @@ export function runTests(game) {
     d.simulate(0.05);
     check(!game.takedown && !game.interact, `got ${game.takedown || (game.interact && game.interact.kind)} while hanging`);
     check(document.getElementById('prompt').textContent.includes('C: drop'), 'no drop prompt while hanging');
+  });
+
+  // ---------- Pistol ----------
+  /** Hold F and turn the camera until the crosshair sits on target (x, y, z). */
+  function aimAt(x, y, z, drive) {
+    d.hold('KeyF');
+    for (let i = 0; i < 12; i++) {
+      const c = camera.position;
+      game.cam.yaw = Math.atan2(-(x - c.x), -(z - c.z));
+      game.cam.pitch = Math.atan2(y - c.y, Math.hypot(x - c.x, z - c.z));
+      d.simulate(1 / 60, drive);
+    }
+  }
+  function fire(drive) {
+    d.press('Mouse0');
+    d.simulate(1 / 60, drive);
+  }
+
+  test('Pistol: shoot the guard, rating drops to Cleared', () => {
+    d.simulate(1 / 60); // paused at his first waypoint, facing the north wall
+    const stay = () => place(guard.pos.x, guard.pos.z + 4); // behind him
+    stay();
+    aimAt(guard.pos.x, 1.2, guard.pos.z, stay);
+    check(game.pistolAim && document.getElementById('crosshair').classList.contains('on'), 'F does not aim (no crosshair)');
+    const ammo = game.ammo;
+    fire(stay);
+    check(game.lastShot && game.lastShot.kind === 'guard', `shot hit ${game.lastShot && game.lastShot.kind}`);
+    check(guard.state === 'dead' && game.ammo === ammo - 1, `guard ${guard.state}, ammo ${game.ammo}`);
+    d.release('KeyF');
+    d.simulate(2, stay);
+    check(guard.state === 'dead' && !guard.seeing, 'dead guard got back up or can still see');
+    place(8.6, -6.6);
+    d.simulate(0.05);
+    d.press('KeyE');
+    d.simulate(0.05);
+    check(game.state === 'complete', `game state ${game.state}`);
+    check(document.querySelector('#overlay .msg').textContent.includes('Cleared'), 'rating is not Cleared');
+  });
+
+  test('Pistol: shoot out a light, its switch cannot bring it back', () => {
+    hide();
+    const L = level.lights.find((l) => l.id === 'A1');
+    const stay = () => place(-9, 6);
+    stay();
+    aimAt(L.fixture.position.x, L.fixture.position.y, L.fixture.position.z, stay);
+    fire(stay);
+    check(game.lastShot && game.lastShot.kind === 'light', `shot hit ${game.lastShot && game.lastShot.kind}`);
+    check(L.broken && !L.on, 'light still working');
+    level.setGroup('A', true);
+    check(!L.on && groupOn('A'), 'switch relit a shot-out light (or the rest of its group is off)');
+  });
+
+  test('Pistol: a shot hitting the wall near the guard draws him', () => {
+    d.simulate(1 / 60);
+    const stay = () => place(9, -2);
+    stay();
+    aimAt(6, 1.5, -9, stay); // north wall, about 3 m in front of him
+    fire(stay);
+    check(game.lastShot && game.lastShot.kind === 'wall', `shot hit ${game.lastShot && game.lastShot.kind}`);
+    check(game.lastShot.heard && guard.state !== 'patrol', `guard ${guard.state}, heard ${game.lastShot.heard}`);
+  });
+
+  test('Pistol: no shots when out of ammo', () => {
+    hide();
+    game.ammo = 0;
+    aimAt(0, 1, -9, hide);
+    fire(hide);
+    check(!game.lastShot && game.ammo === 0, 'fired with no ammo');
   });
 
   fresh();

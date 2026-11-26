@@ -8,9 +8,10 @@ import { Guard, KO_TIME } from './guard.js';
 import { lightAt } from './lighting.js';
 import { Bottle, THROW_NOISE, throwVelocity, predictArc } from './throwable.js';
 import { Hud } from './hud.js';
+import { PISTOL_AMMO, SHOT_NOISE, IMPACT_NOISE, traceShot, makePistolMesh } from './pistol.js';
 import { Input, NullInput } from './input.js';
 import { segmentFirstHit, resolveCircle } from './collision.js';
-import { clamp } from './utils.js';
+import { clamp, lerp } from './utils.js';
 
 const canvas = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -69,6 +70,20 @@ aimMark.visible = false;
 scene.add(aimMark);
 const arcPts = [];
 
+// Pistol: model in the right hand while aiming, and a brief tracer for each shot.
+const pistolMesh = makePistolMesh();
+pistolMesh.position.set(0.28, 1.38, -0.42);
+pistolMesh.visible = false;
+player.group.add(pistolMesh);
+const tracer = new THREE.Line(
+  new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3)),
+  new THREE.LineBasicMaterial({ color: 0xffe0a0, transparent: true, opacity: 0.7, depthWrite: false })
+);
+tracer.frustumCulled = false;
+tracer.visible = false;
+scene.add(tracer);
+const crosshairEl = document.getElementById('crosshair');
+
 // Debug noise ring around the player (shown with V, like the guard view cone).
 const noiseRing = new THREE.Mesh(
   new THREE.RingGeometry(0.97, 1, 48),
@@ -80,6 +95,7 @@ scene.add(noiseRing);
 let showDebug = false;
 
 const CAM_DIST = 3.0;
+const AIM_DIST = 1.6; // camera pulls in while aiming the pistol
 const SHOULDER = 0.45;
 const SENS = 0.0025;
 const KEY_LOOK = 2.2; // rad/s for arrow-key look
@@ -111,6 +127,11 @@ function reset() {
   game.impact = null;    // { pos, radius, t } last smash or hard landing, for the V debug ring
   game.dropHeard = false;
   game.dropKO = false;    // last drop landed on the guard
+  game.ammo = PISTOL_AMMO;
+  game.pistolAim = false; // F held: pistol up
+  game.lastShot = null;   // { kind, point, t, heard }
+  game.killed = false;    // a guard was shot (rating: Cleared)
+  game.camDist = CAM_DIST;
   bottle.reset();
   nv.enabled = false;
   if (input.active) hud.hideOverlay();
@@ -144,8 +165,8 @@ function onSpotted() {
 
 function onComplete() {
   game.state = 'complete';
-  // Being spotted ends the run, so a finish is Ghost (no guard touched) or Shadow (non-lethal takedown).
-  const rating = game.touched ? 'Shadow' : 'Ghost';
+  // Being spotted ends the run: Ghost (no guard touched), Shadow (non-lethal only) or Cleared (a kill).
+  const rating = game.killed ? 'Cleared' : game.touched ? 'Shadow' : 'Ghost';
   hud.showOverlay(
     'Objective complete',
     `Rating: ${rating} · Time ${fmtTime(game.time)}`,
@@ -161,7 +182,7 @@ function throwOrigin() {
 
 function updateThrow(dt, inp) {
   const canThrow = game.holding && !player.grabbing && !player.locked && !player.climb;
-  const gDown = inp.down('KeyG');
+  const gDown = inp.down('KeyG') && !game.pistolAim;
   if (canThrow && gDown) game.aiming = true;
   else if (game.aiming && canThrow && !gDown) {
     bottle.throw(throwOrigin(), throwVelocity(game.cam.yaw, game.cam.pitch));
@@ -174,6 +195,43 @@ function updateThrow(dt, inp) {
     game.impact = { pos: hit.clone(), radius: THROW_NOISE, t: game.time };
     game.impactHeard = guard.hearImpact(hit, THROW_NOISE, level.boxes);
   }
+}
+
+// ---------- Pistol ----------
+function cameraDir() {
+  const { yaw, pitch } = game.cam;
+  return new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
+}
+
+function updatePistol(inp) {
+  const canAim = !player.climb && !player.grabbing && !player.locked && !game.aiming;
+  game.pistolAim = canAim && inp.down('KeyF');
+  player.aiming = game.pistolAim;
+  if (!game.pistolAim || !inp.pressed('Mouse0') || game.ammo <= 0) return;
+  game.ammo--;
+  updateCamera(); // shoot from where the crosshair is this step
+  const dir = cameraDir();
+  const hit = traceShot(camera.position.clone(), dir, level, guard);
+  hit.point.addScaledVector(dir, -0.05); // just off the surface, so the wall it hit does not muffle it
+  let heard = guard.hearImpact(player.pos, SHOT_NOISE, level.boxes);
+  if (hit.kind === 'guard') {
+    if (guard.state === 'grabbed' || guard.state === 'ko') releaseGuard();
+    guard.kill();
+    game.killed = true;
+    game.touched = true;
+    heard = false;
+  } else if (hit.kind === 'light') {
+    level.breakLight(hit.light);
+  }
+  if (hit.kind !== 'miss' && hit.kind !== 'guard') {
+    heard = guard.hearImpact(hit.point, IMPACT_NOISE, level.boxes) || heard;
+    game.impact = { pos: hit.point.clone(), radius: IMPACT_NOISE, t: game.time };
+  }
+  game.lastShot = { kind: hit.kind, point: hit.point, t: game.time, heard };
+  const arr = tracer.geometry.attributes.position.array;
+  const muzzle = pistolMesh.getWorldPosition(new THREE.Vector3());
+  arr.set([muzzle.x, muzzle.y, muzzle.z, hit.point.x, hit.point.y, hit.point.z]);
+  tracer.geometry.attributes.position.needsUpdate = true;
 }
 
 // ---------- Takedowns ----------
@@ -239,6 +297,7 @@ function step(dt, inp) {
 
     holdGuard();
     updateThrow(dt, inp);
+    updatePistol(inp);
     game.noise = { pos: player.pos.clone(), radius: player.locked ? KO_NOISE : player.noiseRadius };
     guard.update(dt, player, samples, sampleLight, level, game.noise);
     if (player.locked && guard.state === 'down') player.locked = false; // knockout finished
@@ -268,7 +327,7 @@ function step(dt, inp) {
     }
     if (guard.suspicion >= 100) onSpotted();
   }
-  if (game.state !== 'playing') game.aiming = false;
+  if (game.state !== 'playing') { game.aiming = false; game.pistolAim = false; player.aiming = false; }
   if (inp.pressed('KeyR')) reset();
   if (inp.pressed('KeyV')) { guard.toggleCone(); showDebug = !showDebug; }
   if (inp.pressed('KeyN')) nv.toggle();
@@ -290,22 +349,29 @@ function updateCamera() {
   const shoulder = pivot.clone().addScaledVector(right, SHOULDER * Math.max(0, ts - 0.3));
 
   // Boom back from the shoulder, pulled in on walls.
-  const desired = shoulder.clone().addScaledVector(dir, -CAM_DIST);
+  const boom = game.camDist;
+  const desired = shoulder.clone().addScaledVector(dir, -boom);
   const t = segmentFirstHit(shoulder, desired, level.boxes);
-  const dist = Math.max(0.3, CAM_DIST * t - 0.2);
+  const dist = Math.max(0.3, boom * t - 0.2);
   camera.position.copy(shoulder).addScaledVector(dir, -dist);
   camera.position.y = clamp(camera.position.y, 0.15, 3.85);
   camera.lookAt(camera.position.clone().add(dir));
 }
 
 function updateHud() {
+  pistolMesh.visible = game.pistolAim;
+  crosshairEl.classList.toggle('on', game.pistolAim);
   hud.update({
     light: player.lightLevel,
     noise: game.noise.radius / MAX_NOISE,
     nv: nv.enabled,
-    held: game.holding ? (game.aiming ? 'BOTTLE · AIMING' : 'BOTTLE · G') : '',
+    held: [
+      game.ammo > 0 ? `PISTOL ${game.ammo}${game.pistolAim ? ' · AIMING' : ' · F'}` : 'PISTOL EMPTY',
+      game.holding ? (game.aiming ? 'BOTTLE · AIMING' : 'BOTTLE · G') : '',
+    ].filter(Boolean).join('\n'),
     stance: player.stance,
     prompt: game.state !== 'playing' ? ''
+      : game.pistolAim ? (game.ammo > 0 ? 'Click: fire' : 'Out of ammo')
       : game.takedown === 'grab' ? 'E: grab'
       : game.takedown === 'knockout' ? 'E: knock out · WASD drag him'
       : player.locked ? ''
@@ -318,7 +384,7 @@ function updateHud() {
       suspicion: guard.suspicion,
       icon: guard.icon,
       grip: guard.state === 'grabbed' ? guard.grip : null,
-      hidden: guard.state === 'ko' || guard.state === 'down',
+      hidden: guard.state === 'ko' || guard.state === 'down' || guard.state === 'dead',
     },
   });
 }
@@ -378,6 +444,8 @@ function frame(now) {
     noiseRing.position.set(src.x, 0.03, src.z);
   }
   updateAim();
+  game.camDist = lerp(game.camDist, game.pistolAim ? AIM_DIST : CAM_DIST, 1 - Math.exp(-12 * dt));
+  tracer.visible = !!game.lastShot && game.time - game.lastShot.t < 0.06;
   nv.render(scene, camera, dt);
   requestAnimationFrame(frame);
 }

@@ -40,3 +40,6 @@
 - ✔ v0.6.1: Pipe climbing is manual (E grabs the riser, W/S climb up and down, C lets go). While hanging, Space
   switches between legs-up and hanging by the hands. Dropping onto a guard knocks him out (drop attack from the
   design doc). Walking and shimmying are quieter.
+- ✔ v0.7: Suppressed pistol: hold F to aim (crosshair, camera pulls in), click to fire, 3 rounds. A shot guard dies
+  (rating drops to Cleared); a shot light breaks for good; shots make a small noise at the shooter and a bigger one
+  where they land, so a shot wall works as a distraction.

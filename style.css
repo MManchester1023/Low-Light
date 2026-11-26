@@ -22,7 +22,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #050608; col
 #nv { position: absolute; left: 100%; top: 0; margin-left: 14px; display: none; font-size: 13px; font-weight: 600;
   letter-spacing: 3px; color: #5dff6e; text-shadow: 0 0 6px rgba(93, 255, 110, 0.7); }
 #held { position: absolute; right: 100%; top: 0; margin-right: 14px; font-size: 11px; letter-spacing: 2px;
-  opacity: 0.8; white-space: nowrap; }
+  opacity: 0.8; white-space: pre; text-align: right; line-height: 1.5; }
+#crosshair { position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  border: 1px solid rgba(220, 235, 255, 0.85); border-radius: 50%; display: none; pointer-events: none; }
+#crosshair::after { content: ''; position: absolute; left: 5px; top: 5px; width: 2px; height: 2px; background: #dcebff; }
+#crosshair.on { display: block; }
 #held:empty { display: none; }
 #meter .stance { font-size: 11px; letter-spacing: 2px; opacity: 0.6; margin-top: 4px; }
 

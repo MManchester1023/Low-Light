@@ -83,4 +83,4 @@ The first build answers one question in two weekends: is sneaking up on a single
 
 **Pass test:** the tester waits, plans an approach and reacts out loud to a near miss. If not, fix detection before adding content.
 
-**Out of scope for now:** gadgets beyond a throwable, guns, multiplayer, final art and body hiding.
+**Out of scope for now:** gadgets beyond a throwable and the pistol, multiplayer, final art and body hiding.

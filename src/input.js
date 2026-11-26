@@ -3,7 +3,7 @@
 // panes refuse it, so without a lock you look around by dragging the mouse (or with the arrow keys).
 
 const GAME_KEYS = new Set(['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight',
-  'KeyC', 'KeyE', 'KeyG', 'KeyR', 'KeyV', 'KeyP', 'KeyN', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+  'KeyC', 'KeyE', 'KeyF', 'KeyG', 'KeyR', 'KeyV', 'KeyP', 'KeyN', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
 
 export class Input {
   constructor(canvas) {
@@ -49,7 +49,12 @@ export class Input {
       if (was && !this._locked) this._setActive(false);
     });
 
-    canvas.addEventListener('mousedown', () => { if (this._active) this._dragging = true; });
+    canvas.addEventListener('mousedown', (e) => {
+      if (!this._active) return;
+      this._dragging = true;
+      if (e.button === 0) { this._down.add('Mouse0'); this._pressed.add('Mouse0'); } // fires the pistol
+    });
+    window.addEventListener('mouseup', (e) => { if (e.button === 0) this._down.delete('Mouse0'); });
     window.addEventListener('mouseup', () => { this._dragging = false; });
     window.addEventListener('mousemove', (e) => {
       if (!this._active || !(this._locked || this._dragging)) return;

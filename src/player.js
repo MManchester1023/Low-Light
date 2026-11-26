@@ -51,6 +51,7 @@ export class Player {
     this.running = false;
     this.grabbing = false; // holding a guard: slow, faces where the camera looks
     this.locked = false;   // mid-knockout: can't move
+    this.aiming = false;   // pistol up: faces where the camera looks
     this.climb = null;     // on a pipe: { pipe, s, mode: 'riser' | 'hang' | 'drop', style: 'legs' | 'hands' }
     this.climbSpeed = 0;
     this.vy = 0;
@@ -143,6 +144,7 @@ export class Player {
     resolveCircle(this.pos, this.radius, boxes);
 
     if (this.grabbing) this.facing = turnToward(this.facing, camYaw, 3 * dt);
+    else if (this.aiming) this.facing = turnToward(this.facing, camYaw, 14 * dt);
     else if (len > 0 && !this.locked) this.facing = turnToward(this.facing, Math.atan2(-mx, -mz), 12 * dt);
     this.crouchBlend += ((this.crouched ? 1 : 0) - this.crouchBlend) * (1 - Math.exp(-10 * dt));
     this.applyMesh();
