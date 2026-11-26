@@ -6,3 +6,4 @@
 | 2026-11-26 | v0.1.1 | Guards should react to a light being turned off and go turn it back on. | Done in v0.2. |
 | 2026-11-26 | v0.1.1 | Guards should investigate sounds; walking louder than crouching, running loudest. | Done in v0.2. |
 | 2026-11-26 | v0.1.1 | Add night vision for when the lights are off. | Done in v0.2 (N toggles). |
+| 2026-11-26 | v0.2 | Night vision is still really dark; fundamentals feel solid. | Fixed in v0.2.1: dark-room pixels went from ~0 to ~150–175 of 255 green with NV on. |

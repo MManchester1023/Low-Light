@@ -12,6 +12,8 @@ uniform sampler2D tScene;
 uniform float uTime;
 uniform vec2 uRes;
 uniform float uGain;
+uniform float uWhite;
+uniform float uLift;
 varying vec2 vUv;
 
 float hash(vec3 p) {
@@ -32,8 +34,10 @@ void main() {
     + (lumAt(vUv + vec2(px.x, 0.0)) + lumAt(vUv - vec2(px.x, 0.0))
      + lumAt(vUv + vec2(0.0, px.y)) + lumAt(vUv - vec2(0.0, px.y))) * 0.15;
 
-  // gain with soft rolloff so bright lights bloom toward white
-  float v = 1.0 - exp(-uGain * lum);
+  // Log amplification: dark rooms render at ~0.001 luminance and lit areas at ~0.25, a 200x gap.
+  // A log curve lifts the dark a lot while lit areas just bloom to white, keeping detail in both.
+  float v = log(1.0 + uGain * lum) / log(1.0 + uGain * uWhite);
+  v = pow(clamp(v, 0.0, 1.0), uLift);
 
   // film grain (animated)
   float n = hash(vec3(gl_FragCoord.xy, floor(uTime * 30.0))) - 0.5;
@@ -75,7 +79,9 @@ export class NightVision {
         tScene: { value: this.target.texture },
         uTime: { value: 0 },
         uRes: { value: new THREE.Vector2(1, 1) },
-        uGain: { value: 10.0 },
+        uGain: { value: 10000.0 }, // amplification strength
+        uWhite: { value: 0.25 },   // scene luminance that maps to full white
+        uLift: { value: 0.85 },     // <1 brightens mid and dark tones
       },
       vertexShader: VERT,
       fragmentShader: FRAG,
