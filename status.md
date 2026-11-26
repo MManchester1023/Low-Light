@@ -13,10 +13,10 @@ The prototype asks one question: is sneaking up on a single guard tense and sati
 
 ## Next: after the prototype passes
 
-5. Evidence: open doors and found bodies raise suspicion (dead lights are done).
-6. Test one paired takedown clip in Three.js before buying an animation pack.
-7. Check each animation license for browser delivery, where players can extract model files.
-8. Throwable distraction object.
+4. Evidence: open doors and found bodies raise suspicion (dead lights are done).
+5. Test one paired takedown clip in Three.js before buying an animation pack.
+6. Check each animation license for browser delivery, where players can extract model files.
+7. Throwable distraction object.
 
 ## Open questions for Mat
 
