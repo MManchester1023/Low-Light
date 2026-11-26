@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { Pipe } from './pipe.js';
+import { resolveCircle } from './collision.js';
+
+const GLASS_R = 0.8; // m: how far a shot-out light's glass spreads on the floor (guess)
 
 // Builds the single-room level: geometry, lights, switches, objective, guard route.
 export function buildLevel(scene) {
@@ -228,15 +231,48 @@ export function buildLevel(scene) {
 
   const switchFor = (group) => interactables.find((i) => i.kind === 'switch' && i.group === group);
 
-  /** A light shot out with the pistol: off for the rest of the mission. */
+  // Broken glass left on the floor under shot-out lights: walking over it is louder (main.js).
+  const glass = []; // [{ x, z, r, mesh }]
+  const glassMat = mat(0xb8d8e8, 0.15, { metalness: 0.3, emissive: 0x405868, emissiveIntensity: 0.5, side: THREE.DoubleSide });
+  const shardGeo = new THREE.CircleGeometry(0.05, 3);
+
+  function spillGlass(l) {
+    // Straight down from the fixture, nudged off any furniture it would land on (the lamp sits on the desk).
+    const spot = new THREE.Vector3(l.fixture.position.x, 0, l.fixture.position.z);
+    resolveCircle(spot, 0.4, boxes);
+    const mesh = new THREE.Group();
+    for (let i = 0; i < 26; i++) {
+      const s = new THREE.Mesh(shardGeo, glassMat);
+      const a = Math.random() * Math.PI * 2;
+      const d = Math.sqrt(Math.random()) * GLASS_R * 0.9;
+      s.position.set(Math.cos(a) * d, 0.006, Math.sin(a) * d);
+      s.rotation.set(-Math.PI / 2, 0, Math.random() * Math.PI * 2);
+      s.scale.setScalar(0.5 + Math.random());
+      mesh.add(s);
+    }
+    mesh.position.copy(spot);
+    scene.add(mesh);
+    glass.push({ x: spot.x, z: spot.z, r: GLASS_R, mesh });
+  }
+
+  /** True if (x, z) is on broken glass. */
+  function onGlass(x, z) {
+    return glass.some((g) => Math.hypot(x - g.x, z - g.z) <= g.r);
+  }
+
+  /** A light shot out with the pistol: off for the rest of the mission, glass on the floor below. */
   function breakLight(l) {
+    if (l.broken) return;
     setLightOn(l, false);
     l.broken = true;
     updateLeds();
+    spillGlass(l);
   }
 
   function reset() {
     for (const l of lights) { l.broken = false; setLightOn(l, true); }
+    for (const g of glass) scene.remove(g.mesh);
+    glass.length = 0;
     updateLeds();
     files.visible = true;
   }
@@ -253,6 +289,8 @@ export function buildLevel(scene) {
     switchFor,
     setGroup,
     breakLight,
+    glass,
+    onGlass,
     reset,
   };
 }

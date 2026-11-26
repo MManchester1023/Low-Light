@@ -9,3 +9,4 @@
 | 2026-11-26 | v0.2 | Night vision is still really dark; fundamentals feel solid. | Fixed in v0.2.1: dark-room pixels went from ~0 to ~150–175 of 255 green with NV on. |
 | 2026-11-26 | v0.2.1 | Guards should walk towards and investigate noises. | Done in v0.3. |
 | 2026-11-26 | v0.2.1 | Start the first hand-to-hand takedown. | Done in v0.3: grab and knockout. |
+| 2026-11-26 | v0.7 | Guard doesn't notice shot-out lights. | Fixed in v0.8: he gets suspicious, walks over and searches. |

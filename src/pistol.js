@@ -1,11 +1,14 @@
-// Suppressed pistol: hold F to aim, click to fire. Hitscan from the camera through the crosshair.
+// Suppressed pistol: 1 draws / holsters it (drawn = aiming), click to fire, R reloads.
+// Hitscan from the camera through the crosshair.
 // A hit guard dies (lethal: the rating drops to Cleared). A hit light breaks for good (no switch fixes it).
 // Every number here is a starting guess to tune in playtests.
 
 import * as THREE from 'three';
 import { segmentFirstHit } from './collision.js';
 
-export const PISTOL_AMMO = 3;
+export const MAG_SIZE = 3;      // rounds in the gun
+export const START_RESERVE = 6; // spare rounds
+export const RELOAD_TIME = 1.6; // s
 export const SHOT_NOISE = 3;    // m at the shooter: suppressed, but not silent
 export const IMPACT_NOISE = 4;  // m where the round lands (wall, glass, body)
 const RANGE = 40;               // m

@@ -16,7 +16,7 @@ export function runTests(game) {
   const near = (a, b, r) => Math.hypot(a.x - b.x, a.z - b.z) <= r;
 
   function fresh() {
-    for (const k of ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyG', 'KeyF', 'ShiftLeft', 'Space']) d.release(k);
+    for (const k of ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyG', 'ShiftLeft', 'Space']) d.release(k);
     d.reset();
   }
 
@@ -59,7 +59,8 @@ export function runTests(game) {
     game.holding = 'bottle';
     guard.remember({ x: 0, z: 0 }, 'sound');
     player.startClimb(level.pipes[0], 5);
-    game.ammo = 0;
+    game.mag = 0;
+    game.pistolDrawn = true;
     level.breakLight(level.lights[0]);
     d.reset();
     const s = level.playerStart;
@@ -70,8 +71,9 @@ export function runTests(game) {
     check(guard.state === 'patrol' && guard.suspicion === 0, `guard ${guard.state} at ${guard.suspicion}`);
     check(guard.memory.length === 0, 'guard memory not cleared');
     check(!player.climb && player.pos.y === 0, 'player still on the pipe');
-    check(game.ammo > 0 && !game.killed, 'pistol not reloaded');
+    check(game.mag > 0 && !game.killed && !game.pistolDrawn, 'pistol not reset');
     check(level.lights.every((l) => !l.broken), 'a shot-out light is still broken');
+    check(level.glass.length === 0 && !level.onGlass(level.lights[0].pos.x, level.lights[0].pos.z), 'broken glass still on the floor');
   });
 
   test('Player starts inside the level and can walk', () => {
@@ -312,9 +314,9 @@ export function runTests(game) {
   });
 
   // ---------- Pistol ----------
-  /** Hold F and turn the camera until the crosshair sits on target (x, y, z). */
+  /** Draw the pistol (1) and turn the camera until the crosshair sits on target (x, y, z). */
   function aimAt(x, y, z, drive) {
-    d.hold('KeyF');
+    if (!game.pistolDrawn) { d.press('Digit1'); d.simulate(1 / 60, drive); }
     for (let i = 0; i < 12; i++) {
       const c = camera.position;
       game.cam.yaw = Math.atan2(-(x - c.x), -(z - c.z));
@@ -332,12 +334,14 @@ export function runTests(game) {
     const stay = () => place(guard.pos.x, guard.pos.z + 4); // behind him
     stay();
     aimAt(guard.pos.x, 1.2, guard.pos.z, stay);
-    check(game.pistolAim && document.getElementById('crosshair').classList.contains('on'), 'F does not aim (no crosshair)');
-    const ammo = game.ammo;
+    check(game.pistolAim && document.getElementById('crosshair').classList.contains('on'), '1 does not draw the pistol (no crosshair)');
+    const ammo = game.mag;
     fire(stay);
     check(game.lastShot && game.lastShot.kind === 'guard', `shot hit ${game.lastShot && game.lastShot.kind}`);
-    check(guard.state === 'dead' && game.ammo === ammo - 1, `guard ${guard.state}, ammo ${game.ammo}`);
-    d.release('KeyF');
+    check(guard.state === 'dead' && game.mag === ammo - 1, `guard ${guard.state}, ammo ${game.mag}`);
+    d.press('Digit1');
+    d.simulate(1 / 60, stay);
+    check(!game.pistolDrawn && !game.pistolAim, '1 does not holster the pistol');
     d.simulate(2, stay);
     check(guard.state === 'dead' && !guard.seeing, 'dead guard got back up or can still see');
     place(8.6, -6.6);
@@ -359,6 +363,7 @@ export function runTests(game) {
     check(L.broken && !L.on, 'light still working');
     level.setGroup('A', true);
     check(!L.on && groupOn('A'), 'switch relit a shot-out light (or the rest of its group is off)');
+    check(level.onGlass(L.pos.x, L.pos.z), 'no broken glass under the light');
   });
 
   test('Pistol: a shot hitting the wall near the guard draws him', () => {
@@ -373,10 +378,114 @@ export function runTests(game) {
 
   test('Pistol: no shots when out of ammo', () => {
     hide();
-    game.ammo = 0;
+    game.mag = 0;
     aimAt(0, 1, -9, hide);
     fire(hide);
-    check(!game.lastShot && game.ammo === 0, 'fired with no ammo');
+    check(!game.lastShot && game.mag === 0, 'fired with an empty magazine');
+  });
+
+  test('Pistol: R reloads from the spare rounds, no firing mid-reload', () => {
+    hide();
+    aimAt(0, 1, -9, hide);
+    fire(hide);
+    const mag = game.mag;
+    const reserve = game.reserve;
+    d.press('KeyR');
+    d.simulate(0.1, hide);
+    check(game.reloading > 0, 'R did not start a reload');
+    game.lastShot = null;
+    fire(hide);
+    check(!game.lastShot, 'fired while reloading');
+    d.simulate(3, hide);
+    check(game.reloading === 0 && game.mag === mag + 1 && game.reserve === reserve - 1, `mag ${game.mag}, spare ${game.reserve}`);
+    check(game.state === 'playing', 'R restarted or ended the game instead of reloading');
+  });
+
+  test('Broken glass makes footsteps louder', () => {
+    hide();
+    const L = level.lights.find((l) => l.id === 'A1');
+    level.breakLight(L);
+    const g = level.glass[0];
+    const walk = (x, z) => {
+      place(x, z);
+      game.cam.yaw = 0;
+      d.hold('KeyW');
+      d.simulate(0.3, () => { player.pos.z = z; }); // walking on the spot
+      d.release('KeyW');
+      return game.noise.radius;
+    };
+    const onGlass = walk(g.x, g.z);
+    check(game.onGlass, 'not standing on the glass');
+    const offGlass = walk(g.x + 3, g.z);
+    check(onGlass > offGlass && offGlass > 0, `glass ${onGlass.toFixed(1)} m vs floor ${offGlass.toFixed(1)} m`);
+  });
+
+  test('Guard notices a shot-out light and goes to look', () => {
+    hide();
+    d.simulate(1 / 60, hide);
+    level.breakLight(level.lights.find((l) => l.id === 'B1')); // over the east room, in his sight
+    let reacted = false;
+    let relit = false;
+    d.simulate(6, () => {
+      hide();
+      if (guard.state === 'suspicious' || guard.state === 'investigate') reacted = true;
+      if (guard.state === 'relight') relit = true;
+    });
+    check(reacted, `guard did not react (state ${guard.state}, suspicion ${guard.suspicion.toFixed(0)})`);
+    check(!relit, 'guard tried to switch a shot-out light back on');
+  });
+
+  // ---------- Pause menu ----------
+  test('Pause menu: restart, settings list the key bindings', () => {
+    const input = game.input;
+    const resume = input.resume;
+    input.resume = () => {}; // no pointer lock or live play during tests
+    try {
+      const menu = game.menu.el;
+      place(5, 5);
+      game.menu.open();
+      check(!menu.classList.contains('hidden'), 'menu not shown');
+      const btn = (act) => menu.querySelector(`[data-act=${act}]`);
+      check(btn('resume') && btn('restart') && btn('settings'), 'missing a menu button');
+      btn('settings').click();
+      const rows = menu.querySelectorAll('.binds li');
+      check(rows.length >= 15, `only ${rows.length} bindings listed`);
+      check([...rows].some((r) => r.textContent.includes('Reload') && r.textContent.includes('R')), 'reload binding not listed');
+      btn('back').click();
+      btn('restart').click();
+      check(menu.classList.contains('hidden'), 'menu still open after restart');
+      check(near(player.pos, level.playerStart, 0.01) && game.state === 'playing', 'restart did not reset the level');
+      check(!document.getElementById('help'), 'key help text still at the top of the screen');
+    } finally {
+      input.resume = resume;
+      game.menu.close();
+    }
+  });
+
+  test('Rebinding a key in settings moves the action to the new key', () => {
+    const input = game.input;
+    const key = (type, code) => window.dispatchEvent(new KeyboardEvent(type, { code }));
+    try {
+      game.menu.open();
+      game.menu.el.querySelector('[data-act=settings]').click();
+      game.menu.el.querySelector('.key[data-action=forward]').click();
+      key('keydown', 'KeyI');
+      key('keyup', 'KeyI');
+      check(input.bindings.forward === 'KeyI', `forward bound to ${input.bindings.forward}`);
+      check(game.menu.el.querySelector('.key[data-action=forward]').textContent === 'I', 'button does not show the new key');
+      key('keydown', 'KeyI');
+      check(input.down('KeyW'), 'the new key does not move forward');
+      key('keyup', 'KeyI');
+      key('keydown', 'KeyW');
+      check(!input.down('KeyW'), 'the old key still moves forward');
+      key('keyup', 'KeyW');
+      input.setBinding('forward', 'KeyS'); // taken by back: they swap
+      check(input.bindings.back === 'KeyI', `back not swapped (${input.bindings.back})`);
+    } finally {
+      input.resetBindings();
+      game.menu.close();
+    }
+    check(input.bindings.forward === 'KeyW' && input.bindings.back === 'KeyS', 'defaults not restored');
   });
 
   fresh();

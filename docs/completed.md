@@ -43,3 +43,7 @@
 - ✔ v0.7: Suppressed pistol: hold F to aim (crosshair, camera pulls in), click to fire, 3 rounds. A shot guard dies
   (rating drops to Cleared); a shot light breaks for good; shots make a small noise at the shooter and a bigger one
   where they land, so a shot wall works as a distraction.
+- ✔ v0.8: Guards notice shot-out lights and go to look. Broken lights leave glass on the floor that makes
+  footsteps louder. Pistol is drawn/holstered with 1 and reloads with R (3-round magazine, 6 spare). Pause menu
+  (Esc/P) with Resume, Restart and Settings; Settings lists every key and lets you rebind it (saved in the
+  browser). The key help text at the top of the screen is gone.

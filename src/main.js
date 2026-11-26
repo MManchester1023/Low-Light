@@ -8,8 +8,8 @@ import { Guard, KO_TIME } from './guard.js';
 import { lightAt } from './lighting.js';
 import { Bottle, THROW_NOISE, throwVelocity, predictArc } from './throwable.js';
 import { Hud } from './hud.js';
-import { PISTOL_AMMO, SHOT_NOISE, IMPACT_NOISE, traceShot, makePistolMesh } from './pistol.js';
-import { Input, NullInput } from './input.js';
+import { MAG_SIZE, START_RESERVE, RELOAD_TIME, SHOT_NOISE, IMPACT_NOISE, traceShot, makePistolMesh } from './pistol.js';
+import { Input, NullInput, ACTIONS, keyLabel } from './input.js';
 import { segmentFirstHit, resolveCircle } from './collision.js';
 import { clamp, lerp } from './utils.js';
 
@@ -99,13 +99,14 @@ const AIM_DIST = 1.6; // camera pulls in while aiming the pistol
 const SHOULDER = 0.45;
 const SENS = 0.0025;
 const KEY_LOOK = 2.2; // rad/s for arrow-key look
+const GLASS_MUL = 2.5; // footsteps on broken glass carry this much further (guess)
 
 const game = {
   state: 'playing', // 'playing' | 'spotted' | 'complete'
   time: 0,
   maxSuspicion: 0,
   cam: { yaw: 0, pitch: -0.2 },
-  level, player, guard, camera, nv, bottle,
+  level, player, guard, camera, nv, bottle, input,
   noise: { pos: new THREE.Vector3(), radius: 0 },
   interact: null,
 };
@@ -127,13 +128,18 @@ function reset() {
   game.impact = null;    // { pos, radius, t } last smash or hard landing, for the V debug ring
   game.dropHeard = false;
   game.dropKO = false;    // last drop landed on the guard
-  game.ammo = PISTOL_AMMO;
-  game.pistolAim = false; // F held: pistol up
+  game.mag = MAG_SIZE;        // rounds in the pistol
+  game.reserve = START_RESERVE;
+  game.reloading = 0;         // s left on a reload (0 = not reloading)
+  game.pistolDrawn = false;   // toggled with 1
+  game.pistolAim = false;     // drawn and able to shoot right now (not climbing, grabbing, ...)
+  game.onGlass = false;
   game.lastShot = null;   // { kind, point, t, heard }
   game.killed = false;    // a guard was shot (rating: Cleared)
   game.camDist = CAM_DIST;
   bottle.reset();
   nv.enabled = false;
+  closeMenu();
   if (input.active) hud.hideOverlay();
   else hud.showOverlay('Low Light', 'Click to play');
 }
@@ -155,12 +161,16 @@ function fmtTime(t) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+/** Key currently bound to an action, for prompts. */
+function K(id) { return input.keyFor(id); }
+function moveKeys() { return ['forward', 'left', 'back', 'right'].map(K).join(''); }
+
 function onSpotted() {
   game.state = 'spotted';
   player.grabbing = false;
   player.locked = false;
   const why = guard.brokeFree ? 'The guard broke free of your grip.' : 'The guard saw you.';
-  hud.showOverlay('Spotted', why, 'Press R to restart');
+  hud.showOverlay('Spotted', why, `Press ${K('reload')} to restart`);
 }
 
 function onComplete() {
@@ -170,7 +180,7 @@ function onComplete() {
   hud.showOverlay(
     'Objective complete',
     `Rating: ${rating} · Time ${fmtTime(game.time)}`,
-    `Guard's highest suspicion: ${Math.round(game.maxSuspicion)}% · Press R to play again`
+    `Guard's highest suspicion: ${Math.round(game.maxSuspicion)}% · Press ${K('reload')} to play again`
   );
 }
 
@@ -203,12 +213,26 @@ function cameraDir() {
   return new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
 }
 
-function updatePistol(inp) {
-  const canAim = !player.climb && !player.grabbing && !player.locked && !game.aiming;
-  game.pistolAim = canAim && inp.down('KeyF');
+function updatePistol(dt, inp) {
+  const busy = player.climb || player.grabbing || player.locked;
+  if (busy) game.pistolDrawn = false; // hands full: put it away
+  else if (inp.pressed('Digit1') && !game.aiming) game.pistolDrawn = !game.pistolDrawn;
+  game.pistolAim = game.pistolDrawn && !busy && !game.aiming;
   player.aiming = game.pistolAim;
-  if (!game.pistolAim || !inp.pressed('Mouse0') || game.ammo <= 0) return;
-  game.ammo--;
+
+  if (game.reloading > 0) {
+    game.reloading = Math.max(0, game.reloading - dt);
+    if (game.reloading === 0) {
+      const n = Math.min(MAG_SIZE - game.mag, game.reserve);
+      game.mag += n;
+      game.reserve -= n;
+    }
+  } else if (inp.pressed('KeyR') && !busy && game.mag < MAG_SIZE && game.reserve > 0) {
+    game.reloading = RELOAD_TIME;
+  }
+
+  if (!game.pistolAim || !inp.pressed('Mouse0') || game.mag <= 0 || game.reloading > 0) return;
+  game.mag--;
   updateCamera(); // shoot from where the crosshair is this step
   const dir = cameraDir();
   const hit = traceShot(camera.position.clone(), dir, level, guard);
@@ -297,8 +321,9 @@ function step(dt, inp) {
 
     holdGuard();
     updateThrow(dt, inp);
-    updatePistol(inp);
-    game.noise = { pos: player.pos.clone(), radius: player.locked ? KO_NOISE : player.noiseRadius };
+    updatePistol(dt, inp);
+    game.onGlass = !player.climb && level.onGlass(player.pos.x, player.pos.z);
+    game.noise = { pos: player.pos.clone(), radius: player.locked ? KO_NOISE : player.noiseRadius * (game.onGlass ? GLASS_MUL : 1) };
     guard.update(dt, player, samples, sampleLight, level, game.noise);
     if (player.locked && guard.state === 'down') player.locked = false; // knockout finished
     game.maxSuspicion = Math.max(game.maxSuspicion, guard.suspicion);
@@ -328,7 +353,7 @@ function step(dt, inp) {
     if (guard.suspicion >= 100) onSpotted();
   }
   if (game.state !== 'playing') { game.aiming = false; game.pistolAim = false; player.aiming = false; }
-  if (inp.pressed('KeyR')) reset();
+  if (game.state !== 'playing' && inp.pressed('KeyR')) reset(); // during play R reloads
   if (inp.pressed('KeyV')) { guard.toggleCone(); showDebug = !showDebug; }
   if (inp.pressed('KeyN')) nv.toggle();
 }
@@ -366,19 +391,21 @@ function updateHud() {
     noise: game.noise.radius / MAX_NOISE,
     nv: nv.enabled,
     held: [
-      game.ammo > 0 ? `PISTOL ${game.ammo}${game.pistolAim ? ' · AIMING' : ' · F'}` : 'PISTOL EMPTY',
-      game.holding ? (game.aiming ? 'BOTTLE · AIMING' : 'BOTTLE · G') : '',
+      `PISTOL ${game.mag}/${game.reserve}${game.reloading > 0 ? ' · RELOADING' : game.pistolDrawn ? ' · DRAWN' : ` · ${K('pistol')}`}`,
+      game.holding ? (game.aiming ? 'BOTTLE · AIMING' : `BOTTLE · ${K('throw')}`) : '',
     ].filter(Boolean).join('\n'),
-    stance: player.stance,
+    stance: player.stance + (game.onGlass ? ' · ON GLASS' : ''),
     prompt: game.state !== 'playing' ? ''
-      : game.pistolAim ? (game.ammo > 0 ? 'Click: fire' : 'Out of ammo')
-      : game.takedown === 'grab' ? 'E: grab'
-      : game.takedown === 'knockout' ? 'E: knock out · WASD drag him'
+      : game.pistolAim ? (game.reloading > 0 ? 'Reloading…'
+        : game.mag > 0 ? `Click: fire · ${K('pistol')}: holster`
+        : game.reserve > 0 ? `Empty · ${K('reload')}: reload` : 'Out of ammo')
+      : game.takedown === 'grab' ? `${K('use')}: grab`
+      : game.takedown === 'knockout' ? `${K('use')}: knock out · ${moveKeys()} drag him`
       : player.locked ? ''
-      : player.hanging ? `${game.interact ? 'E: onto the riser · ' : ''}C: drop · Space: ${player.tucked ? 'hang by hands' : 'legs up'}`
-      : player.climb && player.climb.mode === 'riser' ? 'W climb · S down · C drop'
+      : player.hanging ? `${game.interact ? `${K('use')}: onto the riser · ` : ''}${K('crouch')}: drop · ${K('hang')}: ${player.tucked ? 'hang by hands' : 'legs up'}`
+      : player.climb && player.climb.mode === 'riser' ? `${K('forward')} climb · ${K('back')} down · ${K('crouch')} drop`
       : player.climb ? ''
-      : game.interact ? game.interact.label() : '',
+      : game.interact ? game.interact.label().replace(/^E:/, `${K('use')}:`) : '',
     guard: {
       pos: new THREE.Vector3(guard.pos.x, 2.15, guard.pos.z),
       suspicion: guard.suspicion,
@@ -413,25 +440,75 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 
-// Click starts play; Esc or P pauses.
-const helpEl = document.getElementById('help');
-const helpBase = helpEl.textContent;
+// ---------- Pause menu: resume, restart, settings (key bindings for now) ----------
+// Click starts play; Esc or P pauses and opens the menu.
+const menuEl = document.getElementById('menu');
+const menuMain = menuEl.querySelector('.main');
+const menuSettings = menuEl.querySelector('.settings');
+const bindList = menuEl.querySelector('.binds');
+let rebinding = null; // action id waiting for a key
+
+function openMenu() {
+  hud.hideOverlay();
+  showMenuPage('main');
+  menuEl.classList.remove('hidden');
+}
+function closeMenu() {
+  rebinding = null;
+  menuEl.classList.add('hidden');
+}
+function showMenuPage(page) {
+  rebinding = null;
+  menuMain.classList.toggle('hidden', page !== 'main');
+  menuSettings.classList.toggle('hidden', page !== 'settings');
+  if (page === 'settings') renderBinds();
+}
+function renderBinds() {
+  bindList.textContent = '';
+  const row = (label, key, id) => {
+    const li = document.createElement('li');
+    const name = document.createElement('span');
+    name.textContent = label;
+    const btn = document.createElement('button');
+    btn.className = 'key';
+    btn.textContent = rebinding === id ? 'Press a key…' : key;
+    if (id) {
+      btn.dataset.action = id;
+      btn.addEventListener('click', () => { rebinding = id; renderBinds(); });
+    } else btn.disabled = true; // fixed: mouse controls
+    li.append(name, btn);
+    bindList.append(li);
+  };
+  for (const a of ACTIONS) row(a.label, input.keyFor(a.id), a.id);
+  row('Look', 'Mouse', null);
+  row('Fire pistol (when drawn)', 'Left click', null);
+}
+// While waiting for a key, the next key press becomes the binding (Esc cancels). Runs before the game sees it.
+window.addEventListener('keydown', (e) => {
+  if (!rebinding) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (e.code !== 'Escape') input.setBinding(rebinding, e.code);
+  rebinding = null;
+  renderBinds();
+}, true);
+menuEl.querySelector('[data-act=resume]').addEventListener('click', () => { closeMenu(); input.resume(); });
+menuEl.querySelector('[data-act=restart]').addEventListener('click', () => { closeMenu(); input.resume(); reset(); });
+menuEl.querySelector('[data-act=settings]').addEventListener('click', () => showMenuPage('settings'));
+menuEl.querySelector('[data-act=back]').addEventListener('click', () => showMenuPage('main'));
+menuEl.querySelector('[data-act=defaults]').addEventListener('click', () => { input.resetBindings(); renderBinds(); });
+game.menu = { el: menuEl, open: openMenu, close: closeMenu };
+
 input.onActiveChange = (active) => {
   if (game.state !== 'playing') return;
-  if (active) hud.hideOverlay();
-  else hud.showOverlay('Paused', 'Click to play', 'Esc or P pauses');
+  if (active) { closeMenu(); hud.hideOverlay(); } else openMenu();
 };
-document.addEventListener('pointerlockchange', () => {
-  helpEl.textContent = input.locked ? helpBase : `${helpBase} · Drag the mouse or use arrow keys to look`;
-});
-helpEl.textContent = `${helpBase} · Drag the mouse or use arrow keys to look`;
 
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   if (input.active || game.state !== 'playing') step(dt, input);
-  else if (input.pressed('KeyR')) reset();
   input.endFrame();
   updateCamera();
   updateHud();

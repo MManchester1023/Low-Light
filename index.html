@@ -13,8 +13,7 @@
   <canvas id="view"></canvas>
 
   <div id="hud">
-    <div id="help">WASD move · Mouse look · Shift run · C crouch · E grab a pipe, W/S climb, Space hang style, C drop · E use · G hold to aim, release to throw · F hold to aim pistol, click to fire · R restart · V show guard view · N night vision</div>
-    <div id="crosshair"></div>
+        <div id="crosshair"></div>
     <div id="objective">Objective: take the files from the desk in the east room</div>
     <div id="guardTag"><div class="icon"></div><div class="bar"><div class="fill"></div></div></div>
     <div id="bottom">
@@ -29,6 +28,25 @@
         <div class="stance"></div>
         <div id="nv">NV</div>
         <div id="held"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="menu" class="hidden">
+    <div class="panel main">
+      <h1>Paused</h1>
+      <button data-act="resume">Resume</button>
+      <button data-act="restart">Restart</button>
+      <button data-act="settings">Settings</button>
+    </div>
+    <div class="panel settings hidden">
+      <h1>Settings</h1>
+      <h2>Controls</h2>
+      <p class="hint">Click a key, then press the new one (Esc cancels).</p>
+      <ul class="binds"></ul>
+      <div class="row">
+        <button data-act="defaults">Reset to defaults</button>
+        <button data-act="back">Back</button>
       </div>
     </div>
   </div>

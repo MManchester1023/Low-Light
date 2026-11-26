@@ -28,6 +28,7 @@ const DARK_NOTICE = 14;         // m: a guard notices a dead light he has line o
 const HEAR_REACT_AT = 12;       // a heard noise this loud (in suspicion) sends him to check it out
 const SUSPICIOUS_AT = 25;
 const IMPACT_SUSPICION = 20;    // added by a heard smash (thrown bottle), scaled by loudness
+const EVIDENCE_SUSPICION = 25;  // added when he spots a shot-out light (guess)
 const GRAB_MAX = 8;             // s before a grabbed guard struggles free
 export const KO_TIME = 3;       // s the knockout takes (design doc: about 3 s)
 const TAKEDOWN_RANGE = 1.4;     // m
@@ -104,7 +105,7 @@ export class Guard {
     this.relight = null;        // { group, sw, flipAt }
     this.path = null;
     this.pathTarget = null;
-    this.stimulusKind = null;   // 'sight' | 'sound'
+    this.stimulusKind = null;   // 'sight' | 'sound' | 'evidence' (a shot-out light)
     this.grabTime = 0;
     this.koTime = 0;
     this.brokeFree = false;
@@ -251,6 +252,21 @@ export class Guard {
     return true;
   }
 
+  /**
+   * Something is wrong (a shot-out light): he gets suspicious, walks over to look under it and searches.
+   * Like sound, this alone can't take suspicion past NOISE_CAP.
+   */
+  noticeEvidence(pos) {
+    if (this.disabled || this.state === 'alert') return;
+    this.suspicion = Math.min(NOISE_CAP, Math.max(this.suspicion, SUSPICIOUS_AT) + EVIDENCE_SUSPICION);
+    this.stimulus.set(pos.x, 0, pos.z);
+    this.stimulusKind = 'evidence';
+    this.sinceStimulus = 0;
+    this.relight = null;
+    if (this.state === 'investigate' || this.state === 'look') this.setState('investigate');
+    else if (this.state !== 'suspicious') this.setState('suspicious');
+  }
+
   /** Remember dead lights he can see; forget ones that came back on. */
   checkLights(level) {
     const eye = this.eye();
@@ -262,6 +278,7 @@ export class Guard {
       this.knownDark.add(L.id);
       const sw = L.broken ? null : level.switchFor(L.group); // a shot-out light: remember the light itself
       this.remember(sw ? sw.pos : L.pos, 'light');
+      if (L.broken) this.noticeEvidence(L.pos);
     }
   }
 
@@ -365,7 +382,7 @@ export class Guard {
       case 'suspicious':
         this.face(this.stimulus, 2.5 * dt);
         // A noise always gets checked out; a glimpse only once he is fairly sure.
-        if (this.stimulusKind === 'sound' && this.stateTime > 0.7) this.setState('investigate');
+        if ((this.stimulusKind === 'sound' || this.stimulusKind === 'evidence') && this.stateTime > 0.7) this.setState('investigate');
         else if (this.suspicion >= INVESTIGATE_AT && this.stateTime > 0.8) this.setState('investigate');
         else if (this.suspicion < CALM_AT) this.setState('patrol');
         break;
